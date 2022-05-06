@@ -1,0 +1,1 @@
+pub type Sha256Hash = [u8; 32];
