@@ -9,6 +9,9 @@ from mininet.cli import CLI
 from mininet.util import dumpNodeConnections
 from mininet.log import setLogLevel
 
+N=4
+PROG="message_passing/target/debug/message_passing"
+
 # Build on the Topo base class
 # We're not doing anything with switches, so we can have 
 # a bunch of nodes linked together by one switch. 
@@ -33,6 +36,7 @@ class MultiNodeTopo(Topo):
             self.addLink(host, switch)
 
 # VERY temporary way of setting up everyone to send us output
+# There is... probably a better way to do this? 
 class HostRunner(): 
     def __init__(self, net, netsize, program_str): 
         self.program_str = program_str
@@ -50,12 +54,12 @@ class HostRunner():
 
 
 # Set up the Net
-N=10
+
 topo = MultiNodeTopo(N)
 net = Mininet(topo)
 net.start()
 
-runner = HostRunner(net, N, "target/debug/hello_world")
+runner = HostRunner(net, N, PROG)
 runner.run()
 
 # Indefinitely sleep for the demo?
