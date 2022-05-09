@@ -1,5 +1,6 @@
 import time
 import subprocess
+import os
 
 from threading import Thread
 
@@ -10,7 +11,7 @@ from mininet.util import dumpNodeConnections
 from mininet.log import setLogLevel
 
 N=4
-PROG="message_passing/target/debug/message_passing"
+PROG="p2p_network_test/target/debug/p2p_network_test"
 
 # Build on the Topo base class
 # We're not doing anything with switches, so we can have 
@@ -52,9 +53,10 @@ class HostRunner():
         for line in p.stdout:
             print(line)
 
+# Clean up between runs:
+os.system("sudo mn -c")
 
 # Set up the Net
-
 topo = MultiNodeTopo(N)
 net = Mininet(topo)
 net.start()
