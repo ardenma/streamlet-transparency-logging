@@ -44,38 +44,48 @@ fn handle_message(mut stream: TcpStream, my_ip: &String) {
 }
 
 
-fn open_sockets(config: &ConfigData) {
-    let my_ip = config.my_ip.clone();
-    thread::spawn( move || {
-       let listener = match TcpListener::bind(format!("{}:80", my_ip)) {
-           Ok(listener) => listener,
-           Err(_err) => {
-               println!("error binding locally");
-               std::process::exit(1);
-           }
-       };
-       println!("Listening for requests on {}:80", my_ip);
-       for stream in listener.incoming() {
-           handle_message(stream.unwrap(), &my_ip);
-       }
-    } );
-
-    // Wait for everyone else to get set up
-    thread::sleep(time::Duration::from_secs(5));
-
-    // Start sending messages
-    let msg = format!("Hello from {}", config.my_ip).into_bytes();
-    for peer_ip in &config.peer_ips {
-        let res = TcpStream::connect(format!("{}:80", peer_ip));
-        if let Err(e) = &res {
-            println!("{} failed to connect to {}", config.my_ip, peer_ip);
-            println!("{:?}", e);
-            continue;
+fn open_sockets(config: ConfigData) {
+    
+    // Set up server
+    let listener = match TcpListener::bind(format!("{}:1234", config.my_ip)) {
+        Ok(listener) => listener,
+        Err(_err) => {
+            println!("error binding locally");
+            std::process::exit(1);
         }
-        let mut conn = res.unwrap();
-        // println!("Local address for {}: {}:{}", config.my_ip, conn.local_addr().unwrap().ip(), conn.local_addr().unwrap().port());
-        // Write to stream
-        conn.write_all(&msg).unwrap(); 
+    };
+    println!("Listening for requests on {}:1234", config.my_ip);
+    // Save IP before ownership change
+    let my_ip = config.my_ip.clone();
+
+    thread::spawn( move || {
+        // Wait for everyone else to get set up
+        thread::sleep(time::Duration::from_secs(1));
+
+        // Start sending messages
+        let msg = format!("Hello from {}", config.my_ip).into_bytes();
+        for peer_ip in &config.peer_ips {
+            let res = TcpStream::connect(format!("{}:1234", peer_ip));
+            if let Err(e) = &res {
+                println!("{} failed to connect to {}", config.my_ip, peer_ip);
+                println!("{:?}", e);
+                continue;
+            }
+            let mut conn = res.unwrap();
+            // Write to stream
+            conn.write_all(&msg).unwrap(); 
+        }
+    } );
+    
+    // Start listening as server
+    loop {
+        println!("{} entering listen loop", my_ip);
+        for stream in listener.incoming() {
+            match stream {
+                Ok(stream) => { handle_message(stream, &my_ip); }
+                Err(e) => { println!("{} had error accepting connection: {}", my_ip, e); }
+            }
+        }
     }
 
 
@@ -92,6 +102,6 @@ fn main() {
 
     // println!("Config: {:?}", my_config);
 
-    open_sockets(&my_config);
+    open_sockets(my_config);
 
 }
