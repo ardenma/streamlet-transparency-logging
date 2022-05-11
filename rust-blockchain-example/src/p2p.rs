@@ -15,7 +15,12 @@ use tokio::sync::mpsc;
 // Need lazy initialization to get around the fact that Rust won't let us initialize
 // data in global variables with complex types. 
 pub static KEYS: Lazy<identity::Keypair> = Lazy::new(identity::Keypair::generate_ed25519);
+// Note: he peer ID is a cryptographic multihash of the node's public key
+// If you don't tie the keys and peer ID together, the FloodSub protocol will 
+// reject messages from peers. 
+// https://docs.libp2p.io/concepts/peer-id/
 pub static PEER_ID: Lazy<PeerId> = Lazy::new(|| PeerId::from(KEYS.public()));
+// Helpful to separate out "topics" (channels) by different pieces of the protocol
 pub static CHAIN_TOPIC: Lazy<Topic> = Lazy::new(|| Topic::new("chains"));
 pub static BLOCK_TOPIC: Lazy<Topic> = Lazy::new(|| Topic::new("blocks"));
 
