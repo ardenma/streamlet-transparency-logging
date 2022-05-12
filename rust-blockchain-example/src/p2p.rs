@@ -11,6 +11,11 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use tokio::sync::mpsc;
+use sha2::{Sha256, Digest};
+
+// This was in the utils/crypto, but I couldn't get the import to resolve
+extern crate ed25519_dalek;
+type Sha256Hash = [u8; 32];
 
 // Need lazy initialization to get around the fact that Rust won't let us initialize
 // data in global variables with complex types. 
@@ -23,6 +28,7 @@ pub static PEER_ID: Lazy<PeerId> = Lazy::new(|| PeerId::from(KEYS.public()));
 // Helpful to separate out "topics" (channels) by different pieces of the protocol
 pub static CHAIN_TOPIC: Lazy<Topic> = Lazy::new(|| Topic::new("chains"));
 pub static BLOCK_TOPIC: Lazy<Topic> = Lazy::new(|| Topic::new("blocks"));
+pub static VOTE_TOPIC: Lazy<Topic> = Lazy::new(|| Topic::new("votes"));
 
 // An example of a struct that we can send (or receive) over the network
 #[derive(Debug, Serialize, Deserialize)]
@@ -44,6 +50,39 @@ pub enum EventType {
     Input(String),
     Init,
 }
+
+
+// --- ARDEN'S MESSAGE STRUCTURES ---
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Message {
+    pub header: MessageHeader,
+    pub payload: MessagePayload,
+    // Need something easily serializable/deserializable
+    // Signature -> [u8, 64] -> Vec (and back)
+    pub signatures: Vec<Vec<u8>>, 
+    pub kind: MessageKind,
+}
+
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MessageHeader {
+    pub destination: String,
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+pub struct MessagePayload {
+    pub parent_hash: Sha256Hash,
+    pub epoch: u32,
+    pub payload_string: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum MessageKind {
+    Vote,
+    Propose,
+}
+
+// --- END ARDEN'S MESSAGE STRUCTURES ---
 
 // Core of the distributed behavior
 #[derive(NetworkBehaviour)]
@@ -85,7 +124,7 @@ impl AppBehaviour {
         };
         behaviour.floodsub.subscribe(CHAIN_TOPIC.clone());
         behaviour.floodsub.subscribe(BLOCK_TOPIC.clone());
-
+        behaviour.floodsub.subscribe(VOTE_TOPIC.clone());
         behaviour
     }
 }
@@ -120,6 +159,9 @@ impl NetworkBehaviourEventProcess<FloodsubEvent> for AppBehaviour {
             } else if let Ok(block) = serde_json::from_slice::<Block>(&msg.data) {
                 info!("received new block from {}", msg.source.to_string());
                 self.app.try_add_block(block);
+            } else if let Ok(resp) = serde_json::from_slice::<Message>(&msg.data) {
+                info!("received message from {}", msg.source.to_string());
+                info!("{}", resp.payload.payload_string);
             }
         }
     }
@@ -174,16 +216,10 @@ pub fn handle_create_block(cmd: &str, swarm: &mut Swarm<AppBehaviour>) {
     if let Some(data) = cmd.strip_prefix("create b") {
         // Note: we can get our 
         let behaviour = swarm.behaviour_mut();
-        let latest_block = behaviour
-            .app
-            .blocks
-            .last()
-            .expect("there is at least one block");
-        let block = Block::new(
-            latest_block.id + 1,
-            latest_block.hash.clone(),
-            data.to_owned(),
-        );
+
+        // Note: incorporate legit hashes here
+
+        let block = Block::new(data.to_string());
         let json = serde_json::to_string(&block).expect("can jsonify request");
         behaviour.app.blocks.push(block);
         info!("broadcasting new block");
@@ -191,4 +227,40 @@ pub fn handle_create_block(cmd: &str, swarm: &mut Swarm<AppBehaviour>) {
             .floodsub
             .publish(BLOCK_TOPIC.clone(), json.as_bytes());
     }
+}
+
+pub fn handle_send_msg(cmd: &str, swarm: &mut Swarm<AppBehaviour>) {
+    if let Some(data) = cmd.strip_prefix("send m") {
+        let behaviour = swarm.behaviour_mut();
+
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        let result = hasher.finalize();
+        let bytes: Sha256Hash = result.as_slice().try_into().expect("slice with incorrect length");
+
+        // Create a message
+        let payload = MessagePayload {
+            parent_hash: bytes,
+            epoch: 0,
+            payload_string: String::from(data),
+        };
+        let header = MessageHeader {
+            destination: String::from("test destination"),
+        };
+        let kind = MessageKind::Vote;
+        let message = Message {
+            header: header.clone(),
+            payload: payload.clone(),
+            kind: kind,
+            signatures: Vec::new(),
+        };
+
+        let json = serde_json::to_string(&message).expect("can jsonify request");
+        
+        info!("broadcasting message");
+        behaviour
+            .floodsub
+            .publish(VOTE_TOPIC.clone(), json.as_bytes());
+    }
+
 }
