@@ -34,6 +34,7 @@ use tokio::{
 
 
 mod p2p;
+mod network_dir;
 
 pub struct App {
     pub blocks: Vec<Block>,
@@ -307,3 +308,4 @@ fn do_init(swarm: &mut Swarm<p2p::AppBehaviour>) {
             .publish(p2p::CHAIN_TOPIC.clone(), json.as_bytes());
     }
 }
+

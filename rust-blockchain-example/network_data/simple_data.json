@@ -1,0 +1,134 @@
+{ 
+    "dir_list" :
+        [ 
+            { 
+                "or_list" : 
+                    [
+                        {
+                            "router" : { "nickname" : "r1", "address" : "1.1.1.1", "or_port" : "1234", "socks_port": "0", "dir_port": "0" },
+                            "identity_ed25519" : "0104_cert_data_for_r1",
+                            "master_key_ed25519" : "key_data_r1",
+                            "bandwidth" : "10", 
+                            "platform" : "Linux",
+                            "published" : "05_11_2022",
+                            "onion_key" : "r1_onion_key",
+                            "onion_key_crosscert" : "r1_cross_cert",
+                            "ipv6_policy": "reject",
+                            "contact": "abc@abcdef.com"
+                        },
+                        {
+                            "router" : { "nickname" : "r2", "address" : "2.2.2.2", "or_port" : "1234", "socks_port": "0", "dir_port": "0" },
+                            "identity_ed25519" : "0104_cert_data_for_r2",
+                            "master_key_ed25519" : "key_data_r2",
+                            "bandwidth" : "100", 
+                            "platform" : "MacOS",
+                            "published" : "05_10_2022",
+                            "onion_key" : "r2_onion_key",
+                            "onion_key_crosscert" : "r2_cross_cert",
+                            "ipv6_policy": "reject",
+                            "contact": "123@12345.com"
+                        }
+                    ]
+            }, 
+            {
+                "or_list" : 
+                    [
+                        {
+                            "router" : { "nickname" : "r1", "address" : "1.1.1.1", "or_port" : "1234", "socks_port": "0", "dir_port": "0" },
+                            "identity_ed25519" : "0104_cert_data_for_r1",
+                            "master_key_ed25519" : "key_data_r1",
+                            "bandwidth" : "10", 
+                            "platform" : "Linux",
+                            "published" : "05_11_2022",
+                            "onion_key" : "r1_onion_key",
+                            "onion_key_crosscert" : "r1_cross_cert",
+                            "ipv6_policy": "reject",
+                            "contact": "abc@abcdef.com"
+                        },
+                        {
+                            "router" : { "nickname" : "r2", "address" : "2.2.2.2", "or_port" : "1234", "socks_port": "0", "dir_port": "0" },
+                            "identity_ed25519" : "0104_cert_data_for_r2",
+                            "master_key_ed25519" : "key_data_r2",
+                            "bandwidth" : "100", 
+                            "platform" : "MacOS",
+                            "published" : "05_10_2022",
+                            "onion_key" : "r2_onion_key",
+                            "onion_key_crosscert" : "r2_cross_cert",
+                            "ipv6_policy": "reject",
+                            "contact": "123@12345.com"
+                        },        
+                        {
+                            "router" : { "nickname" : "r3", "address" : "3.3.3.3", "or_port" : "1234", "socks_port": "0", "dir_port": "0" },
+                            "identity_ed25519" : "0104_cert_data_for_r3",
+                            "master_key_ed25519" : "key_data_r3",
+                            "bandwidth" : "100", 
+                            "platform" : "MacOS",
+                            "published" : "05_09_2022",
+                            "onion_key" : "r3_onion_key",
+                            "onion_key_crosscert" : "r3_cross_cert",
+                            "ipv6_policy": "reject",
+                            "contact": "123@12345.com"
+                        }
+                    ]
+            },
+            { 
+                "or_list" : 
+                    [
+                        {
+                            "router" : { "nickname" : "r2", "address" : "2.2.2.2", "or_port" : "1234", "socks_port": "0", "dir_port": "0"},
+                            "identity_ed25519" : "0104_cert_data_for_r2",
+                            "master_key_ed25519" : "key_data_r2",
+                            "bandwidth" : "100", 
+                            "platform" : "MacOS",
+                            "published" : "05_10_2022",
+                            "onion_key" : "r2_onion_key",
+                            "onion_key_crosscert" : "r2_cross_cert",
+                            "ipv6_policy": "reject",
+                            "contact": "123@12345.com"
+                        },        
+                        {
+                            "router" : { "nickname" : "r3", "address" : "3.3.3.3", "or_port" : "1234", "socks_port": "0", "dir_port": "0" },
+                            "identity_ed25519" : "0104_cert_data_for_r3",
+                            "master_key_ed25519" : "key_data_r3",
+                            "bandwidth" : "100", 
+                            "platform" : "MacOS",
+                            "published" : "05_09_2022",
+                            "onion_key" : "r3_onion_key",
+                            "onion_key_crosscert" : "r3_cross_cert",
+                            "ipv6_policy": "reject",
+                            "contact": "123@12345.com"
+                        }
+                    ]
+            },
+            {
+                "or_list" :  
+                    [
+                        {
+                            "router" : { "nickname" : "r4", "address" : "4.4.4.4", "or_port" : "1234", "socks_port": "0", "dir_port": "0" },
+                            "identity_ed25519" : "0104_cert_data_for_r4",
+                            "master_key_ed25519" : "key_data_r4",
+                            "bandwidth" : "50", 
+                            "platform" : "Windows",
+                            "published" : "05_08_2022",
+                            "onion_key" : "r4_onion_key",
+                            "onion_key_crosscert" : "r4_cross_cert",
+                            "ipv6_policy": "reject",
+                            "contact": "contact@abcdefg.com"
+                        },        
+                        {
+                            "router" : { "nickname" : "r3", "address" : "3.3.3.3", "or_port" : "1234", "socks_port": "0", "dir_port": "0" },
+                            "identity_ed25519" : "0104_cert_data_for_r3",
+                            "master_key_ed25519" : "key_data_r3",
+                            "bandwidth" : "100", 
+                            "platform" : "MacOS",
+                            "published" : "05_09_2022",
+                            "onion_key" : "r3_onion_key",
+                            "onion_key_crosscert" : "r3_cross_cert",
+                            "ipv6_policy": "reject",
+                            "contact": "123@12345.com"
+                        }
+                    ]
+            }
+        ],
+    "cur_idx" : 0
+}
