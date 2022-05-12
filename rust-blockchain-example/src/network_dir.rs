@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 
 static BLOCK_DATA : &str = "network_data/simple_data.json";
 
-#[allow(dead_code)]
+
 #[derive(Serialize, Deserialize, Debug)]
 struct RouterData {
     nickname: String, 
@@ -13,7 +13,7 @@ struct RouterData {
     dir_port: String, 
 }
 
-#[allow(dead_code)]
+
 #[derive(Serialize, Deserialize, Debug)]
 struct OrData {
     router: RouterData, 
@@ -28,13 +28,13 @@ struct OrData {
     contact: String,
 }
 
-#[allow(dead_code)]
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NetDir {
     or_list: Vec<OrData>,
 } 
 
-#[allow(dead_code)]
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct AllNetDirs {
     dir_list: Vec<NetDir>,
@@ -44,7 +44,7 @@ pub struct AllNetDirs {
 impl AllNetDirs {
     // Read in block data from file
     // Expect a list of net directories
-    #[allow(dead_code)]
+    
     pub fn new() -> Self {
         let all_data = 
             serde_json::from_reader(
@@ -54,7 +54,7 @@ impl AllNetDirs {
         all_data
     }
 
-    #[allow(dead_code)]
+    
     pub fn pop_next(&mut self) -> String {
         let i = self.cur_idx.clone();
         self.cur_idx += 1;
