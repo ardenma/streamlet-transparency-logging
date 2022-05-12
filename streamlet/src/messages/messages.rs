@@ -4,7 +4,7 @@ use serde::{Serialize, Deserialize};
 
 use crate::utils::crypto::*;
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     pub header: MessageHeader,
     pub payload: MessagePayload,
@@ -13,23 +13,33 @@ pub struct Message {
 }
 
 impl Message {
+    // Used to sign the message payload (block)
     pub fn serialize_payload(&self) -> Vec<u8> {
         return self.payload.serialize();
     }
+    pub fn serialize(&self) ->  Vec<u8> {
+        let encoded: Vec<u8> = serialize(self).unwrap();  // TODO handle errors?
+        return encoded;
+    }
+    pub fn deserialize(encoded: &Vec<u8>) -> Message {
+        let decoded: Message = deserialize(&encoded[..]).unwrap();  // TODO handle errors?
+        return decoded;
+    }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MessageHeader {
     pub destination: String,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MessagePayload {
     pub parent_hash: Sha256Hash,
     pub epoch: u32,
     pub payload_string: String,
 }
 
+// Useful for serializing the payload (blocK) so we can sign it
 impl MessagePayload {
     pub fn serialize(&self) ->  Vec<u8> {
         let encoded: Vec<u8> = serialize(self).unwrap();
@@ -41,17 +51,15 @@ impl MessagePayload {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MessageKind {
     Vote,
     Propose,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
 
     #[test]
     fn test_message_serdes() {
@@ -79,9 +87,9 @@ mod tests {
         };
 
         // Serdes
-        let encoded_payload = message.serialize_payload();
-        let decoded_payload = MessagePayload::deserialize(&encoded_payload);
+        let serialized_message = message.serialize();
+        let deserialized_message = Message::deserialize(&serialized_message);
        
-        assert_eq!(payload, decoded_payload);
+        assert_eq!(message, deserialized_message);
     }
 }
