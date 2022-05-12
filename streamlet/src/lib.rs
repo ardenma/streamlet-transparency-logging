@@ -3,6 +3,8 @@ mod messages;
 mod utils;
 
 use std::collections::VecDeque;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 pub use utils::crypto::*;
 pub use blockchain::Block;
@@ -12,8 +14,8 @@ pub struct StreamletInstance {
     pub id: u32,
     pub inbound_messages: VecDeque<Message>,
     pub outbound_messages: VecDeque<Message>,
+    num_instances: u32,
     keypair: Keypair,
-
 }
 
 impl StreamletInstance {
@@ -32,6 +34,12 @@ impl StreamletInstance {
     }
     pub fn recv(&mut self) -> Option<Message> {
         return self.inbound_messages.pop_front();
+    }
+    pub fn get_epoch_leader(&self, epoch: u32) -> u32 {
+        let mut hasher = DefaultHasher::new();
+        hasher.write_u32(epoch);
+        let result = hasher.finish() as u32;
+        return result % self.num_instances;  // Assumes 0 indexing!
     }
 }
 
@@ -54,6 +62,7 @@ pub fn create_streamlet_instance(id: u32) -> StreamletInstance {
     let streamlet = StreamletInstance {
         id: id,
         keypair: keypair, 
+        num_instances: 1,
         inbound_messages: VecDeque::new(),
         outbound_messages: VecDeque::new(),
     };
