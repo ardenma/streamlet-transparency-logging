@@ -51,15 +51,24 @@ impl AllNetDirs {
             File::open(BLOCK_DATA)
                 .expect("Failed to open block data file"))
             .expect("Failed to parse block data");
-        println!("All data: {:?}", all_data);
         all_data
     }
 
     #[allow(dead_code)]
-    pub fn next_data(&mut self) -> String {
+    pub fn pop_next(&mut self) -> String {
         let i = self.cur_idx.clone();
         self.cur_idx += 1;
-        let ret = self.dir_list.get(i).clone();
+        let ret = self.dir_list.get(i);
+        if let Some(dir) = ret {
+            return serde_json::to_string(dir).unwrap()
+        } else {
+            return "".to_string()
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn peek_next(&self) -> String {
+        let ret = self.dir_list.get(self.cur_idx);
         if let Some(dir) = ret {
             return serde_json::to_string(dir).unwrap()
         } else {
@@ -86,7 +95,9 @@ mod tests {
         println!("Printing data...");
         let mut prev_data = "".to_string();
         while net_data.is_more_data() {
-            let this_data = net_data.next_data();
+            let peek_data = net_data.peek_next();
+            let this_data = net_data.pop_next();
+            assert!(peek_data == this_data);
             println!("{:?}", this_data);
             println!("");
             // Check that we're printing new data each time

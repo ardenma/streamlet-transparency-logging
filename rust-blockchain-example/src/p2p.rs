@@ -170,25 +170,22 @@ pub fn handle_print_chain(swarm: &Swarm<AppBehaviour>) {
 }
 
 // Helper for block creation (user command)
-pub fn handle_create_block(cmd: &str, swarm: &mut Swarm<AppBehaviour>) {
-    if let Some(data) = cmd.strip_prefix("create b") {
-        // Note: we can get our 
-        let behaviour = swarm.behaviour_mut();
-        let latest_block = behaviour
-            .app
-            .blocks
-            .last()
-            .expect("there is at least one block");
-        let block = Block::new(
-            latest_block.id + 1,
-            latest_block.hash.clone(),
-            data.to_owned(),
-        );
-        let json = serde_json::to_string(&block).expect("can jsonify request");
-        behaviour.app.blocks.push(block);
-        info!("broadcasting new block");
-        behaviour
-            .floodsub
-            .publish(BLOCK_TOPIC.clone(), json.as_bytes());
-    }
+pub fn handle_create_block(data: String, swarm: &mut Swarm<AppBehaviour>) {
+    let behaviour = swarm.behaviour_mut();
+    let latest_block = behaviour
+        .app
+        .blocks
+        .last()
+        .expect("there is at least one block");
+    let block = Block::new(
+        latest_block.id + 1,
+        latest_block.hash.clone(),
+        data.to_owned(),
+    );
+    let json = serde_json::to_string(&block).expect("can jsonify request");
+    behaviour.app.blocks.push(block);
+    info!("broadcasting new block");
+    behaviour
+        .floodsub
+        .publish(BLOCK_TOPIC.clone(), json.as_bytes());
 }

@@ -227,6 +227,8 @@ async fn main() {
     )
     .expect("swarm can't be started");
 
+    let mut data_queue = network_dir::AllNetDirs::new();
+
     // Initialize the app
     spawn(async move {
         // Wait for setup (e.g., MDNS to discover peers)
@@ -277,7 +279,7 @@ async fn main() {
                     // Handle user commands
                     "ls p" => p2p::handle_print_peers(&swarm),
                     cmd if cmd.starts_with("ls c") => p2p::handle_print_chain(&swarm),
-                    cmd if cmd.starts_with("create b") => p2p::handle_create_block(cmd, &mut swarm),
+                    cmd if cmd.starts_with("create b") => p2p::handle_create_block(data_queue.pop_next(), &mut swarm),
                     _ => error!("unknown command"),
                 },
             }
