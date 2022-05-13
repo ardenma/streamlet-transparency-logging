@@ -4,11 +4,11 @@ mod utils;
 
 use std::collections::VecDeque;
 use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
+use std::hash::{Hasher};
 
 pub use utils::crypto::*;
 pub use blockchain::Block;
-pub use messages::{Message, MessageHeader, MessagePayload};
+pub use messages::{Message, MessagePayload};
 
 pub struct StreamletInstance {
     pub id: u32,
@@ -27,8 +27,14 @@ impl StreamletInstance {
     }
     pub fn send(&mut self, message: &mut Message, add_signature: bool) {
         if add_signature {
-            let signature: Signature = self.keypair.sign(message.serialize_payload().as_slice());
-            message.signatures.push(signature)
+            match &message.signatures {
+                Some(_) => {
+                    let signature: Signature = self.keypair.sign(message.serialize_payload().as_slice());
+                    let signatures: &mut Vec<Signature> = message.signatures.as_mut().unwrap();
+                    signatures.push(signature)
+                },
+                None => panic!("Tried to add signature to message without signature vector!"),
+            }   
         }
         self.outbound_messages.push_back(message.clone());
     }
@@ -52,7 +58,8 @@ impl StreamletInstance {
         let result = hasher.finalize();
         let bytes: Sha256Hash = result.as_slice().try_into().expect("slice with incorrect length");
         let genesis = Block {
-            hash: bytes,
+            parent_hash: bytes,
+            epoch: 0,
             data: String::from("this is the genesis block."),
         };
 

@@ -3,13 +3,13 @@ use bincode::{serialize, deserialize};
 use serde::{Serialize, Deserialize};
 
 use crate::utils::crypto::*;
+use crate::blockchain::Block;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Message {
-    pub header: MessageHeader,
     pub payload: MessagePayload,
-    pub signatures: Vec<Signature>,
     pub kind: MessageKind,
+    pub signatures: Option<Vec<Signature>>,
 }
 
 impl Message {
@@ -27,19 +27,13 @@ impl Message {
     }
 }
 
+// Wrapper for different kinds of messages (currently only blocks are supported)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MessageHeader {
-    pub destination: String,
+pub enum MessagePayload {
+    Block(Block),    
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MessagePayload {
-    pub parent_hash: Sha256Hash,
-    pub epoch: u32,
-    pub payload_string: String,
-}
-
-// Useful for serializing the payload (blocK) so we can sign it
+// Useful for serializing the payload (block) so we can sign it
 impl MessagePayload {
     pub fn serialize(&self) ->  Vec<u8> {
         let encoded: Vec<u8> = serialize(self).unwrap();
@@ -63,27 +57,26 @@ mod tests {
 
     #[test]
     fn test_message_serdes() {
+
         // Create random hash
         let mut hasher = Sha256::new();
         hasher.update(b"hello world");
         let result = hasher.finalize();
         let bytes: Sha256Hash = result.as_slice().try_into().expect("slice with incorrect length");
-
-        // Create a message
-        let payload = MessagePayload {
+        
+        // Create a test block
+        let blk = Block {
             parent_hash: bytes,
             epoch: 0,
-            payload_string: String::from("test"),
+            data: String::from("test"),
         };
-        let header = MessageHeader {
-            destination: String::from("test destination"),
-        };
-        let kind = MessageKind::Vote;
+
+        // Create a message
+        let payload = MessagePayload::Block(blk); 
         let message = Message {
-            header: header.clone(),
             payload: payload.clone(),
-            kind: kind,
-            signatures: Vec::new(),
+            kind: MessageKind::Vote,
+            signatures: Some(Vec::new()),
         };
 
         // Serdes

@@ -1,10 +1,12 @@
 use sha2::{Sha256, Digest};
+use serde::{Serialize, Deserialize};
 
 use crate::utils::crypto::*;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Block {
-    pub hash: Sha256Hash,
+    pub parent_hash: Sha256Hash,
+    pub epoch: u32,
     pub data: String,
 }
 
@@ -14,7 +16,8 @@ impl Block {
         let mut hasher = Sha256::new();
 
         // add block fields
-        hasher.update(self.hash.as_slice());
+        hasher.update(self.parent_hash.as_slice());
+        hasher.update(self.epoch.to_ne_bytes().as_slice());
         hasher.update(self.data.as_bytes());
 
         // read hash digest and consume hasher
@@ -38,15 +41,18 @@ mod tests {
 
         // Create some blocks
         let blk1 = Block {
-            hash: bytes,
+            parent_hash: bytes,
+            epoch: 0,
             data: String::from("foo"),
         };
         let blk2 = Block {
-            hash: bytes,
+            parent_hash: bytes,
+            epoch: 0,
             data: String::from("bar"),
         };
         let blk3 = Block {
-            hash: bytes,
+            parent_hash: bytes,
+            epoch: 0,
             data: String::from("bar"),
         };
 
