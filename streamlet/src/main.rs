@@ -1,5 +1,5 @@
-use streamlet;
+use streamlet::{self, StreamletInstance};
 
 fn main() {
-    let streamlet: streamlet::StreamletInstance = streamlet::create_streamlet_instance(0);
+    let streamlet = streamlet::StreamletInstance::new(0);
 }

@@ -41,43 +41,40 @@ impl StreamletInstance {
         let result = hasher.finish() as u32;
         return result % self.num_instances;  // Assumes 0 indexing!
     }
+    pub fn new(id: u32) -> Self {
+        // Setup public/private key pair
+        let mut csprng = OsRng{};
+        let keypair: Keypair = Keypair::generate(&mut csprng);
+
+        // Encode genesis block (probably should throw this in the chain instead)
+        let mut hasher = Sha256::new();
+        hasher.update(b"cs244b rocks!");
+        let result = hasher.finalize();
+        let bytes: Sha256Hash = result.as_slice().try_into().expect("slice with incorrect length");
+        let genesis = Block {
+            hash: bytes,
+            data: String::from("this is the genesis block."),
+        };
+
+        // Build the streamlet instance
+        let streamlet = StreamletInstance {
+            id: id,
+            keypair: keypair, 
+            num_instances: 1,
+            inbound_messages: VecDeque::new(),
+            outbound_messages: VecDeque::new(),
+        };
+
+        return streamlet;
+    }
 }
-
-pub fn create_streamlet_instance(id: u32) -> StreamletInstance {
-    // Setup public/private key pair
-    let mut csprng = OsRng{};
-    let keypair: Keypair = Keypair::generate(&mut csprng);
-
-    // Encode genesis block (probably should throw this in the chain instead)
-    let mut hasher = Sha256::new();
-    hasher.update(b"cs244b rocks!");
-    let result = hasher.finalize();
-    let bytes: Sha256Hash = result.as_slice().try_into().expect("slice with incorrect length");
-    let genesis = Block {
-        hash: bytes,
-        data: String::from("this is the genesis block."),
-    };
-
-    // Build the streamlet instance
-    let streamlet = StreamletInstance {
-        id: id,
-        keypair: keypair, 
-        num_instances: 1,
-        inbound_messages: VecDeque::new(),
-        outbound_messages: VecDeque::new(),
-    };
-
-    return streamlet;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_streamlet_signatures() {
-        let streamlet: StreamletInstance = create_streamlet_instance(0);
-
+        let streamlet = StreamletInstance::new(0);
         // Testing signatures
         let message: &[u8] = b"This is a test of the tsunami alert system.";
         let signature: Signature = streamlet.sign(message);
