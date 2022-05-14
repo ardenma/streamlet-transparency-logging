@@ -9,6 +9,7 @@ use crate::blockchain::Block;
 pub struct Message {
     pub payload: MessagePayload,
     pub kind: MessageKind,
+    pub nonce: u32,
     pub signatures: Option<Vec<Signature>>,
 }
 
@@ -30,7 +31,8 @@ impl Message {
 // Wrapper for different kinds of messages (currently only blocks are supported)
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MessagePayload {
-    Block(Block),    
+    Block(Block),
+    String(String),  
 }
 
 // Useful for serializing the payload (block) so we can sign it
@@ -49,6 +51,7 @@ impl MessagePayload {
 pub enum MessageKind {
     Vote,
     Propose,
+    Test,
 }
 
 #[cfg(test)]
@@ -72,10 +75,10 @@ mod tests {
         };
 
         // Create a message
-        let payload = MessagePayload::Block(blk); 
         let message = Message {
-            payload: payload.clone(),
+            payload: MessagePayload::Block(blk),
             kind: MessageKind::Vote,
+            nonce: 0,
             signatures: Some(Vec::new()),
         };
 
