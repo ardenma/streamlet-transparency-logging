@@ -5,14 +5,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use rand::Rng;
 
+use ed25519_dalek::{Keypair, PublicKey};
+use rand::rngs::OsRng;
+
 use log::info;
 
 #[derive(Debug)]
 pub struct Peers {
-    // Public -- everyone can access name
     pub node_name: String,
-    // Public for ease of lookup, iteration, etc. 
-    pub peer_list: HashMap<String, Vec<u8>>,
+    pub keypair: Keypair,
+    pub peer_list: HashMap<String, PublicKey>,
     num_expected: usize,
 }
 
@@ -20,7 +22,7 @@ pub struct Peers {
 pub struct PeerAdvertisement {
     end_init: bool,
     node_name: String, 
-    public_key: Vec<u8>,
+    public_key: PublicKey,
     known_peers: Vec<String>,
 }
 
@@ -35,7 +37,9 @@ impl Peers {
             my_name = format!("{}", rand).to_string();
         }
         info!("Initializing peer with name {}", my_name);
-        Self{ node_name: my_name, peer_list: HashMap::new(), num_expected: 0 }
+        let mut csprng = OsRng{};
+        let keypair: Keypair = Keypair::generate(&mut csprng);
+        Self{ node_name: my_name, keypair: keypair, peer_list: HashMap::new(), num_expected: 0 }
     }
 
     /* Start (or restart) an initialization process from scratch. 
@@ -93,7 +97,7 @@ impl Peers {
         let my_ad = PeerAdvertisement{ 
             end_init: true,
             node_name: String::new(), 
-            public_key: Vec::new(), 
+            public_key: self.keypair.public, 
             known_peers: Vec::new(),
         };
         net_stack.send_init_channel(serde_json::to_vec(&my_ad).expect("Can't create advertisement."));
@@ -108,7 +112,7 @@ impl Peers {
             return; 
         }
         info!("ending init protocol");
-        info!("Final state: {:?}", self);
+        info!("Final state: {:?}", self.peer_list);
         net_stack.close_init_channel();
     }
 
@@ -131,7 +135,7 @@ impl Peers {
         let my_ad = PeerAdvertisement{ 
             end_init: false,
             node_name: self.node_name.clone(), 
-            public_key: Vec::new(), 
+            public_key: self.keypair.public, 
             known_peers: Vec::from_iter(self.peer_list.keys().cloned() ),
         };
         net_stack.send_init_channel(serde_json::to_vec(&my_ad).expect("Can't create advertisement."));

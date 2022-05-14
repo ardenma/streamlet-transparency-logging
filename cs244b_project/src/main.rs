@@ -121,6 +121,7 @@ async fn main() {
                     }
                 }
                 EventType::NetworkInput(bytes) => {
+                    println!("Message is {} bytes", bytes.len());
                     if let Ok(ad) = serde_json::from_slice::<peer_init::PeerAdvertisement>(&bytes) {
                         peers.recv_advertisement(ad, &mut net_stack);
                     }
