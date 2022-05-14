@@ -22,6 +22,11 @@ pub struct NetworkStack {
     swarm: Swarm<AppBehaviour>,
     // For broadcasting messages
     topic: Topic,
+    // Optional: if you want to have a time-bound, 
+    // initialization period; a topic to subscribe to & 
+    // unsubscribe from. 
+    init_topic: Topic,
+    init_open: bool,
     // Note: could save peer id, but not needed?
 }
 
@@ -92,7 +97,7 @@ impl NetworkStack {
             app_sender: app_sender,
         };
 
-        behaviour.floodsub.subscribe(topic.clone());        
+        behaviour.floodsub.subscribe(topic.clone());  
         
         let transp = TokioTcpConfig::new()  
             .upgrade(upgrade::Version::V1)
@@ -109,9 +114,13 @@ impl NetworkStack {
         swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse().expect("Can't get a local socket"))
             .expect("Can't start swarm!");
         
+        let init_topic = Topic::new("init");
+
         Self{ 
             swarm: swarm,
             topic: topic, 
+            init_topic: init_topic,
+            init_open: false,
         }
     }
 
@@ -128,6 +137,34 @@ impl NetworkStack {
         // Returns future that resolves when next item in stream returns
         // (Won't resolve to `none` if stream is empty)
         self.swarm.select_next_some().await;
+    }
+
+    // Methods for handling an optional "init" channel. 
+    // Optional, additional channel that can be opened and closed
+    // Can be used for, e.g., a short-term bootstrapping period. 
+    pub fn open_init_channel(&mut self) {
+        self.swarm.behaviour_mut().floodsub.subscribe(self.init_topic.clone());
+        self.init_open = true;
+    }
+
+    pub fn close_init_channel(&mut self) {
+        self.swarm.behaviour_mut().floodsub.unsubscribe(self.init_topic.clone());
+        self.init_open = false;
+    }
+
+    pub fn init_channel_open(&self) -> bool {
+        self.init_open
+    }
+
+    pub fn send_init_channel(&mut self, message: Vec<u8>) {
+        if !self.init_open {
+            return;
+        }
+        self
+            .swarm
+            .behaviour_mut()
+            .floodsub
+            .publish(self.init_topic.clone(), message);
     }
 
 }
