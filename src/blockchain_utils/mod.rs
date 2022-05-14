@@ -1,2 +1,2 @@
+pub mod chain;
 pub mod block;
-mod chain;

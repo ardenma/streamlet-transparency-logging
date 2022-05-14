@@ -3,10 +3,6 @@ name = "blocklogger"
 version = "0.1.0"
 authors = ["abe, arden, thea"]
 
-[lib]
-name = "blockchainApi"
-path = "src/lib.rs"
-
 [[bin]]
 name = "blockchain"
 path = "src/main.rs"
