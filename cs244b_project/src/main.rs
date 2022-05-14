@@ -111,7 +111,7 @@ async fn main() {
             match event{
                 EventType::UserInput(line) => {
                     if line.starts_with("end discovery") || line.starts_with("e d") {
-                        peers.end_init(&mut net_stack);
+                        peers.send_end_init(&mut net_stack);
                     } else {
                         println!("User input!");
                         let rand : u32 = rand::thread_rng().gen();

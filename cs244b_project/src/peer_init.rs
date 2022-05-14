@@ -18,6 +18,7 @@ pub struct Peers {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct PeerAdvertisement {
+    end_init: bool,
     node_name: String, 
     public_key: Vec<u8>,
     known_peers: Vec<String>,
@@ -61,6 +62,10 @@ impl Peers {
        @param ad: PeerAdvertisement received from the network 
        @param net_stack: network stack containing an initialization channel to send on. */
     pub fn recv_advertisement(&mut self, ad: PeerAdvertisement, net_stack: &mut network::NetworkStack) {
+        if ad.end_init && self.is_done() {
+            self.end_init(net_stack);
+            return; 
+        }
         if self.is_done() || self.peer_list.contains_key(&ad.node_name) {
             info!("{} received a duplicate or out-of-scope peer advertisement", self.node_name);
             return;
@@ -84,10 +89,21 @@ impl Peers {
         self.peer_list.len() >= self.num_expected
     }
 
+    pub fn send_end_init(&mut self, net_stack: &mut network::NetworkStack) {
+        let my_ad = PeerAdvertisement{ 
+            end_init: true,
+            node_name: String::new(), 
+            public_key: Vec::new(), 
+            known_peers: Vec::new(),
+        };
+        net_stack.send_init_channel(serde_json::to_vec(&my_ad).expect("Can't create advertisement."));
+        self.end_init(net_stack);
+    }
+
     /*  Close the initialization channel. 
     Should not need to be called externally -- will be closed after the "last" 
     advertisement is received. */
-    pub fn end_init(&mut self, net_stack: &mut network::NetworkStack) {
+    fn end_init(&mut self, net_stack: &mut network::NetworkStack) {
         if !net_stack.init_channel_open() {
             return; 
         }
@@ -113,6 +129,7 @@ impl Peers {
 
     fn advertise_self(&mut self, net_stack: &mut network::NetworkStack) {
         let my_ad = PeerAdvertisement{ 
+            end_init: false,
             node_name: self.node_name.clone(), 
             public_key: Vec::new(), 
             known_peers: Vec::from_iter(self.peer_list.keys().cloned() ),
