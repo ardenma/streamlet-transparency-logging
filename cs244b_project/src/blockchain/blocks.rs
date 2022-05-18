@@ -33,6 +33,7 @@ mod tests {
 
     #[test]
     fn test_block_hash() {
+
         // Create random hash
         let mut hasher = Sha256::new();
         hasher.update(b"hello world");
@@ -56,10 +57,6 @@ mod tests {
             data: String::from("bar"),
         };
 
-        // println!("{:?}", blk1.hash());
-        // println!("{:?}", blk2.hash());
-        // println!("{:?}", blk1.hash() == blk2.hash());
-        // println!("{:?}", blk2.hash() == blk3.hash());
         assert_ne!(blk1.hash(), blk2.hash());
         assert_eq!(blk2.hash(), blk3.hash());
     }
