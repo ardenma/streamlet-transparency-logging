@@ -7,6 +7,7 @@ use tokio::{
 use rand::Rng;
 
 mod network;
+mod app;
 
 // Demo of the networking API 
 
@@ -17,6 +18,13 @@ enum EventType {
 
 #[tokio::main]
 async fn main() {
+
+    let args : Vec<String> = std::env::args().collect();
+    if args[1] == "setup" {
+        app::init(args);
+        return;
+    }
+
     // Initialize 
     // (1) message queue for the network to send us data
     // (2) message queue for us to receive data from the network
