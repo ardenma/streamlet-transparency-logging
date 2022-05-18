@@ -22,6 +22,7 @@ pub struct StreamletInstance {
     pub id: u32,
     num_instances: u32,
     keypair: Keypair,
+    public_keys: Vec<PublicKey>,
 }
 enum EventType {
     UserInput(String),
@@ -39,6 +40,7 @@ impl StreamletInstance {
         // Setup public/private key pair
         let mut csprng = OsRng{};
         let keypair: Keypair = Keypair::generate(&mut csprng);
+        let pk: PublicKey = keypair.public.clone();
 
         // Encode genesis block (probably should throw this in the chain instead)
         let mut hasher = Sha256::new();
@@ -56,6 +58,7 @@ impl StreamletInstance {
             id: id,
             keypair: keypair, 
             num_instances: 1,
+            public_keys: Vec::from([pk])
         }
     }
 
@@ -133,7 +136,7 @@ impl StreamletInstance {
         return self.keypair.sign(bytes);
     }
 
-    fn sign_message(&mut self, message: &mut Message) {
+    fn sign_message(&self, message: &mut Message) {
         match &message.signatures {
             Some(_) => {
                 let signature: Signature = self.keypair.sign(message.serialize_payload().as_slice());
@@ -143,30 +146,46 @@ impl StreamletInstance {
             None => panic!("Tried to add signature to message without signature vector!"),
         }
     }
- 
-    // fn send(&mut self, message: &mut Message, add_signature: bool) {
-    //     if add_signature {
-    //         match &message.signatures {
-    //             Some(_) => {
-    //                 let signature: Signature = self.keypair.sign(message.serialize_payload().as_slice());
-    //                 let signatures: &mut Vec<Signature> = message.signatures.as_mut().unwrap();
-    //                 signatures.push(signature)
-    //             },
-    //             None => panic!("Tried to add signature to message without signature vector!"),
-    //         }   
-    //     }
-    //     self.outbound_messages.push_back(message.clone());
-    // }
 
-    // fn recv(&mut self) -> Option<Message> {
-    //     return self.inbound_messages.pop_front();
-    // }
+    fn verify_signature(&self, message: &Message, signature: &Signature, pk: &PublicKey) -> bool {
+        let result = pk.verify(message.serialize_payload().as_slice(), signature);
+        if let Err(error) = result {
+            return false;
+        } else {
+            return true;
+        }
+    }
+
+    // Kind of dumb, should make more efficient
+    fn verify_message(&self, message: &Message) -> bool {
+        let signatures = message.signatures.as_ref().unwrap();
+        // Check all signatures
+        for signature in signatures.iter() {
+            // Check against all known pk's
+            let mut success = false;
+            for pk in self.public_keys.iter() {
+                if self.verify_signature(message, signature, pk) {
+                    success = true;
+                    break;
+                }
+            }
+            if !success {
+                return false;
+            }
+        }
+        return true;
+    }
 
     fn get_epoch_leader(&self, epoch: u32) -> u32 {
         let mut hasher = DefaultHasher::new();
         hasher.write_u32(epoch);
         let result = hasher.finish() as u32;
         return result % self.num_instances;  // Assumes 0 indexing!
+    }
+
+    // For testing
+    pub fn add_public_key(&mut self, pk: PublicKey) {
+        self.public_keys.push(pk.clone());
     }
 }
 
@@ -186,5 +205,52 @@ mod tests {
         let signature: Signature = streamlet.sign(message);
         let public_key: PublicKey = streamlet.get_public_key();
         assert!(public_key.verify(message, &signature).is_ok());
+    }
+
+    #[test]
+    fn test_streamlet_msg_signatures() {
+        let mut streamlet1 = StreamletInstance::new(0);
+        let streamlet2 = StreamletInstance::new(1);
+        let streamlet3 = StreamletInstance::new(2);
+
+        // Create random hash
+        let mut hasher = Sha256::new();
+        hasher.update(b"hello world");
+        let result = hasher.finalize();
+        let bytes: Sha256Hash = result.as_slice().try_into().expect("slice with incorrect length");
+        
+        // Create a test block
+        let blk = Block {
+            parent_hash: bytes,
+            epoch: 0,
+            data: String::from("test"),
+        };
+
+        // Create a message
+        let mut message = Message {
+            payload: MessagePayload::Block(blk),
+            kind: MessageKind::Vote,
+            nonce: 0,
+            signatures: Some(Vec::new()),
+        };
+
+        // Signing message
+        streamlet1.sign_message(&mut message);
+        assert!(message.signatures.as_ref().unwrap().len() == 1);
+        streamlet2.sign_message(&mut message);
+        assert!(message.signatures.as_ref().unwrap().len() == 2);
+        streamlet3.sign_message(&mut message);
+        assert!(message.signatures.as_ref().unwrap().len() == 3);
+        
+        // Adding public keys to streamlet1
+        streamlet1.add_public_key(streamlet2.get_public_key());
+        let bad_result = streamlet1.verify_message(&message);
+        assert!(bad_result == false);
+        streamlet1.add_public_key(streamlet3.get_public_key());
+        assert!(streamlet1.public_keys.len() == 3);
+
+        // Verify message with all signatures
+        let good_result = streamlet1.verify_message(&message);
+        assert!(good_result == true);
     }
 }
