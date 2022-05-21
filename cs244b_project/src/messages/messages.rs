@@ -1,11 +1,10 @@
+use bincode::{deserialize, serialize};
+use serde::{Deserialize, Serialize};
 use std::vec::Vec;
-use bincode::{serialize, deserialize};
-use libp2p::core::network::Peer;
-use serde::{Serialize, Deserialize};
 
-use crate::utils::crypto::*;
 use crate::blockchain::Block;
 use crate::network::peer_init::PeerAdvertisement;
+use crate::utils::crypto::*;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Message {
@@ -20,7 +19,7 @@ impl Message {
     pub fn serialize_payload(&self) -> Vec<u8> {
         return self.payload.serialize();
     }
-    pub fn serialize(&self) ->  Vec<u8> {
+    pub fn serialize(&self) -> Vec<u8> {
         let encoded: Vec<u8> = serialize(self).expect("Failed serialization.");
         return encoded;
     }
@@ -40,7 +39,7 @@ pub enum MessagePayload {
 
 // Useful for serializing the payload (block) so we can sign it
 impl MessagePayload {
-    pub fn serialize(&self) ->  Vec<u8> {
+    pub fn serialize(&self) -> Vec<u8> {
         let encoded: Vec<u8> = serialize(self).unwrap();
         return encoded;
     }
@@ -64,13 +63,15 @@ mod tests {
 
     #[test]
     fn test_message_serdes() {
-
         // Create random hash
         let mut hasher = Sha256::new();
         hasher.update(b"hello world");
         let result = hasher.finalize();
-        let bytes: Sha256Hash = result.as_slice().try_into().expect("slice with incorrect length");
-        
+        let bytes: Sha256Hash = result
+            .as_slice()
+            .try_into()
+            .expect("slice with incorrect length");
+
         // Create a test block
         let blk = Block {
             parent_hash: bytes,
@@ -89,7 +90,7 @@ mod tests {
         // Serdes
         let serialized_message = message.serialize();
         let deserialized_message = Message::deserialize(&serialized_message);
-       
+
         assert_eq!(message, deserialized_message);
     }
 }

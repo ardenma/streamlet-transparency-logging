@@ -1,5 +1,5 @@
-use sha2::{Sha256, Digest};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::utils::crypto::*;
 
@@ -22,7 +22,10 @@ impl Block {
 
         // read hash digest and consume hasher
         let result = hasher.finalize();
-        let bytes = result.as_slice().try_into().expect("slice with incorrect length");
+        let bytes = result
+            .as_slice()
+            .try_into()
+            .expect("slice with incorrect length");
         return bytes;
     }
 }
@@ -33,12 +36,14 @@ mod tests {
 
     #[test]
     fn test_block_hash() {
-
         // Create random hash
         let mut hasher = Sha256::new();
         hasher.update(b"hello world");
         let result = hasher.finalize();
-        let bytes: Sha256Hash = result.as_slice().try_into().expect("slice with incorrect length");
+        let bytes: Sha256Hash = result
+            .as_slice()
+            .try_into()
+            .expect("slice with incorrect length");
 
         // Create some blocks
         let blk1 = Block {

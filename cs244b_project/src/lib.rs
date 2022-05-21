@@ -1,33 +1,30 @@
-mod network;
 mod blockchain;
 mod messages;
+mod network;
 mod utils;
 
 use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hasher};
+use std::hash::Hasher;
 
+use rand::Rng;
+use std::time::Duration;
 use tokio::{
     io::{stdin, AsyncBufReadExt, BufReader},
+    select, spawn,
     sync::mpsc,
-    select,
     time::sleep,
-    spawn,
 };
-use std::time::Duration;
-use serde::{Deserialize, Serialize};
-use rand::Rng;
 
-pub use utils::crypto::*;
-pub use network::NetworkStack;
-pub use network::peer_init;
 pub use blockchain::Block;
-pub use messages::{Message, MessagePayload, MessageKind};
+pub use messages::{Message, MessageKind, MessagePayload};
+pub use network::peer_init;
+pub use network::NetworkStack;
+pub use utils::crypto::*;
 
 pub struct StreamletInstance {
     pub id: u32,
     pub name: String,
     expected_peer_count: usize,
-    num_instances: u32,
     keypair: Keypair,
     public_keys: Vec<PublicKey>,
 }
@@ -42,11 +39,10 @@ enum EventType {
 // ==========================
 
 impl StreamletInstance {
-
     // Creates a new Streamlet Instance
     pub fn new(id: u32, expected_peer_count: usize, name: String) -> Self {
         // Setup public/private key pair
-        let mut csprng = OsRng{};
+        let mut csprng = OsRng {};
         let keypair: Keypair = Keypair::generate(&mut csprng);
         let pk: PublicKey = keypair.public.clone();
 
@@ -54,7 +50,10 @@ impl StreamletInstance {
         let mut hasher = Sha256::new();
         hasher.update(b"cs244b rocks!");
         let result = hasher.finalize();
-        let bytes: Sha256Hash = result.as_slice().try_into().expect("slice with incorrect length");
+        let bytes: Sha256Hash = result
+            .as_slice()
+            .try_into()
+            .expect("slice with incorrect length");
         let genesis = Block {
             parent_hash: bytes,
             epoch: 0,
@@ -66,19 +65,18 @@ impl StreamletInstance {
             id: id,
             expected_peer_count: expected_peer_count,
             name: name,
-            keypair: keypair, 
-            num_instances: 1,
-            public_keys: Vec::from([pk])
+            keypair: keypair,
+            public_keys: Vec::from([pk]),
         }
     }
 
     // Main Streamlet event loop
     pub async fn run(&self) {
-        // Initialize 
+        // Initialize
         // (1) message queue for the network to send us data
         // (2) message queue for us to receive data from the network
         let (net_sender, mut receiver) = mpsc::unbounded_channel();
-        
+
         // Initialize the network stack
         let mut net_stack = network::NetworkStack::new("test_messages", net_sender).await;
 
@@ -89,7 +87,8 @@ impl StreamletInstance {
         let mut peers = peer_init::Peers::new(self.name.clone(), self.keypair.public);
         let (trigger_init, mut recv_init) = mpsc::channel(1);
         let mut needs_init = true;
-        spawn(async move { // trigger after MDNS has had a chance to do its thing
+        spawn(async move {
+            // trigger after MDNS has had a chance to do its thing
             sleep(Duration::from_secs(1)).await;
             trigger_init.send(0).await.expect("can't send init event");
         });
@@ -103,13 +102,13 @@ impl StreamletInstance {
                         let line_data = line.expect("Can't get line").expect("Can't read from stdin");
                         Some(EventType::UserInput(line_data))
                     },
-    
+
                     // When the network receives *any* message, it forwards the data to us thru this channel
                     network_response = receiver.recv() => {
                         Some(EventType::NetworkInput(network_response.expect("Response doesn't exist.")))
                     },
-    
-                    // One way to model the initialization event 
+
+                    // One way to model the initialization event
                     _init = recv_init.recv() => {
                         recv_init.close();
                         if needs_init {
@@ -119,32 +118,32 @@ impl StreamletInstance {
                             None
                         }
                     },
-    
+
                     // Needs to be polled in order to make progress.
                     _ = net_stack.clear_unhandled_event() => {
                         None
                     },
-                    
+
                 }
             };
             if let Some(event) = evt {
-                match event{
+                match event {
                     EventType::UserInput(line) => {
                         if line.starts_with("end discovery") || line.starts_with("e d") {
                             peers.send_end_init(&mut net_stack);
                         } else {
                             println!("User input!");
 
-                            let rand : u32 = rand::thread_rng().gen();
+                            let rand: u32 = rand::thread_rng().gen();
                             let message = Message {
                                 payload: MessagePayload::String(line),
                                 kind: MessageKind::Test,
                                 nonce: rand,
                                 signatures: None,
                             };
-    
+
                             println!("Sending message {:?}", message);
-                            
+
                             net_stack.broadcast_message(message.serialize());
                         }
                     }
@@ -155,7 +154,7 @@ impl StreamletInstance {
                         match message.payload {
                             MessagePayload::PeerAdvertisement(ad) => {
                                 peers.recv_advertisement(ad, &mut net_stack);
-                            },
+                            }
                             _ => {}
                         };
                     }
@@ -177,7 +176,6 @@ impl StreamletInstance {
 // =========================
 
 impl StreamletInstance {
- 
     fn sign(&self, bytes: &[u8]) -> Signature {
         return self.keypair.sign(bytes);
     }
@@ -185,10 +183,11 @@ impl StreamletInstance {
     fn sign_message(&self, message: &mut Message) {
         match &message.signatures {
             Some(_) => {
-                let signature: Signature = self.keypair.sign(message.serialize_payload().as_slice());
+                let signature: Signature =
+                    self.keypair.sign(message.serialize_payload().as_slice());
                 let signatures: &mut Vec<Signature> = message.signatures.as_mut().unwrap();
                 signatures.push(signature)
-            },
+            }
             None => panic!("Tried to add signature to message without signature vector!"),
         }
     }
@@ -226,7 +225,7 @@ impl StreamletInstance {
         let mut hasher = DefaultHasher::new();
         hasher.write_u32(epoch);
         let result = hasher.finish() as u32;
-        return result % self.num_instances;  // Assumes 0 indexing!
+        return result % (self.expected_peer_count as u32); // Assumes 0 indexing!
     }
 
     // For testing
@@ -263,8 +262,11 @@ mod tests {
         let mut hasher = Sha256::new();
         hasher.update(b"hello world");
         let result = hasher.finalize();
-        let bytes: Sha256Hash = result.as_slice().try_into().expect("slice with incorrect length");
-        
+        let bytes: Sha256Hash = result
+            .as_slice()
+            .try_into()
+            .expect("slice with incorrect length");
+
         // Create a test block
         let blk = Block {
             parent_hash: bytes,
@@ -287,7 +289,7 @@ mod tests {
         assert!(message.signatures.as_ref().unwrap().len() == 2);
         streamlet3.sign_message(&mut message);
         assert!(message.signatures.as_ref().unwrap().len() == 3);
-        
+
         // Adding public keys to streamlet1
         streamlet1.add_public_key(streamlet2.get_public_key());
         let bad_result = streamlet1.verify_message(&message);

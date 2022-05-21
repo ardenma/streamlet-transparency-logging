@@ -1,14 +1,11 @@
-use crate::messages::{Message, MessageKind, MessagePayload};
-use super::NetworkStack;
-
-use serde::{Deserialize, Serialize};
-
-use std::collections::HashMap;
-use rand::Rng;
-
-use ed25519_dalek::{PublicKey};
-
+use ed25519_dalek::PublicKey;
 use log::info;
+use rand::Rng;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+use super::NetworkStack;
+use crate::messages::{Message, MessageKind, MessagePayload};
 
 #[derive(Debug)]
 pub struct Peers {
@@ -21,28 +18,33 @@ pub struct Peers {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PeerAdvertisement {
     end_init: bool,
-    node_name: String, 
+    node_name: String,
     public_key: PublicKey,
     known_peers: Vec<String>,
 }
 
 impl Peers {
-    /* Initializer: 
-        @param my_name: identifying "name" of this node 
+    /* Initializer:
+        @param my_name: identifying "name" of this node
             (if empty string, name will be generated from random 32-bit number)
         @param public_key: public key belonging to the owning StreamletInstance
     */
     pub fn new(mut my_name: String, public_key: PublicKey) -> Self {
-        if my_name == "" { 
-            let rand : u32 = rand::thread_rng().gen();
+        if my_name == "" {
+            let rand: u32 = rand::thread_rng().gen();
             my_name = format!("{}", rand).to_string();
         }
         info!("Initializing peer with name {}", my_name);
-        Self{ node_name: my_name, public_key: public_key, peer_list: HashMap::new(), num_expected: 0 }
+        Self {
+            node_name: my_name,
+            public_key: public_key,
+            peer_list: HashMap::new(),
+            num_expected: 0,
+        }
     }
 
-    /* Start (or restart) an initialization process from scratch. 
-    @param net_stack: network stack containing an initialization channel to send on. 
+    /* Start (or restart) an initialization process from scratch.
+    @param net_stack: network stack containing an initialization channel to send on.
     @param expected_count: the number of peers we expect to receive during initialization.
                             NOT including the current node.
     Note: this can be called again to force a re-initialization. */
@@ -50,26 +52,32 @@ impl Peers {
         if net_stack.init_channel_open() {
             return;
         }
-        info!("{} is starting initialization; adding {} peers", self.node_name, expected_count);
+        info!(
+            "{} is starting initialization; adding {} peers",
+            self.node_name, expected_count
+        );
         self.num_expected = expected_count;
         self.peer_list = HashMap::new();
         net_stack.open_init_channel();
         self.advertise_self(net_stack);
     }
 
-    /* Should be triggered whenever a PeerAdvertisement is received from the network. 
-    Inserts the peer into the hashmap if not already present. 
-    Protocol will accept first public key received for a peer. 
-    Closes the initialization channel if all peers have been received. 
-    @param ad: PeerAdvertisement received from the network 
+    /* Should be triggered whenever a PeerAdvertisement is received from the network.
+    Inserts the peer into the hashmap if not already present.
+    Protocol will accept first public key received for a peer.
+    Closes the initialization channel if all peers have been received.
+    @param ad: PeerAdvertisement received from the network
     @param net_stack: network stack containing an initialization channel to send on. */
     pub fn recv_advertisement(&mut self, ad: PeerAdvertisement, net_stack: &mut NetworkStack) {
         if ad.end_init && self.is_done() {
             self.end_init(net_stack);
-            return; 
+            return;
         }
         if self.is_done() || self.peer_list.contains_key(&ad.node_name) {
-            info!("{} received a duplicate or out-of-scope peer advertisement", self.node_name);
+            info!(
+                "{} received a duplicate or out-of-scope peer advertisement",
+                self.node_name
+            );
             return;
         }
         info!("{} adding peer: {}", self.node_name, ad.node_name);
@@ -80,9 +88,11 @@ impl Peers {
         }
 
         if self.is_done() && net_stack.init_channel_open() {
-            info!("{} is done with peer discovery protocol; discovered {} peer(s)", 
-                    self.node_name, 
-                    self.peer_list.len());
+            info!(
+                "{} is done with peer discovery protocol; discovered {} peer(s)",
+                self.node_name,
+                self.peer_list.len()
+            );
         }
     }
 
@@ -92,13 +102,13 @@ impl Peers {
     }
 
     pub fn send_end_init(&mut self, net_stack: &mut NetworkStack) {
-        let my_ad = PeerAdvertisement{ 
+        let my_ad = PeerAdvertisement {
             end_init: true,
-            node_name: String::new(), 
-            public_key: self.public_key, 
+            node_name: String::new(),
+            public_key: self.public_key,
             known_peers: Vec::new(),
         };
-        let rand : u32 = rand::thread_rng().gen();
+        let rand: u32 = rand::thread_rng().gen();
         let message = Message {
             payload: MessagePayload::PeerAdvertisement(my_ad),
             kind: MessageKind::Init,
@@ -110,12 +120,12 @@ impl Peers {
         self.end_init(net_stack);
     }
 
-    /*  Close the initialization channel. 
-    Should not need to be called externally -- will be closed after the "last" 
+    /*  Close the initialization channel.
+    Should not need to be called externally -- will be closed after the "last"
     advertisement is received. */
     fn end_init(&mut self, net_stack: &mut NetworkStack) {
         if !net_stack.init_channel_open() {
-            return; 
+            return;
         }
         info!("ending init protocol");
         info!("Final state: {:?}", self.peer_list);
@@ -138,14 +148,14 @@ impl Peers {
     }
 
     fn advertise_self(&mut self, net_stack: &mut NetworkStack) {
-        let my_ad = PeerAdvertisement{ 
+        let my_ad = PeerAdvertisement {
             end_init: false,
-            node_name: self.node_name.clone(), 
-            public_key: self.public_key, 
-            known_peers: Vec::from_iter(self.peer_list.keys().cloned() ),
+            node_name: self.node_name.clone(),
+            public_key: self.public_key,
+            known_peers: Vec::from_iter(self.peer_list.keys().cloned()),
         };
 
-        let rand : u32 = rand::thread_rng().gen();
+        let rand: u32 = rand::thread_rng().gen();
         let message = Message {
             payload: MessagePayload::PeerAdvertisement(my_ad),
             kind: MessageKind::Init,
@@ -155,5 +165,4 @@ impl Peers {
 
         net_stack.send_init_channel(message.serialize());
     }
-
 }
