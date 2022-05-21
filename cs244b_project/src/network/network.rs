@@ -17,6 +17,8 @@ use tokio::sync::mpsc;
 use log::error;
 // use log::info;
 
+static MAX_MSG_SIZE : usize = 1974;
+
 pub struct NetworkStack {
     // Access to network functionality
     swarm: Swarm<AppBehaviour>,
@@ -125,6 +127,7 @@ impl NetworkStack {
     }
 
     pub fn broadcast_message(&mut self, message: Vec<u8>) {
+        assert!(message.len() <= MAX_MSG_SIZE);
         self
             .swarm
             .behaviour_mut()
