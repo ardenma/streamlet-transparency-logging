@@ -1,5 +1,9 @@
 use libp2p::{
-    floodsub::{Floodsub, FloodsubEvent, Topic},
+    gossipsub,
+    gossipsub::{
+        GossipsubEvent, GossipsubMessage, MessageId, IdentTopic as Topic, 
+        MessageAuthenticity, ValidationMode,
+    },
     identity,
     noise,
     futures::StreamExt,
@@ -7,17 +11,20 @@ use libp2p::{
     swarm::{NetworkBehaviourEventProcess, Swarm, SwarmBuilder},
     tcp::TokioTcpConfig,
     Transport,
-    core::upgrade,
+    core::{upgrade, transport, muxing},
     mplex,
     NetworkBehaviour, 
     PeerId,
 };
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 // use log::{error, info};
 use tokio::sync::mpsc;
 use log::error;
+use std::time::Duration;
 // use log::info;
 
-static MAX_MSG_SIZE : usize = 1974;
+// static MAX_MSG_SIZE : usize = 1974;
 
 pub struct NetworkStack {
     // Access to network functionality
@@ -32,7 +39,7 @@ struct AppBehaviour {
     // Flooding protocol -- will trigger events (see below) 
     // when messages are received. Will also give us "channels"
     // to publish data to peers.
-    floodsub: Floodsub,
+    gossipsub: gossipsub::Gossipsub,
     // A way of discovering peers that are running our protocol. 
     mdns: Mdns,
 
@@ -41,15 +48,17 @@ struct AppBehaviour {
     app_sender: mpsc::UnboundedSender<Vec<u8>>,
 }
 
-impl NetworkBehaviourEventProcess<FloodsubEvent> for AppBehaviour {
-    fn inject_event(&mut self, event: FloodsubEvent) {
-        if let FloodsubEvent::Message(msg) = event { 
-            // Forward raw bytes.
-            let res =        self.app_sender.send(msg.data);      
+impl NetworkBehaviourEventProcess<GossipsubEvent> for AppBehaviour {
+    fn inject_event(&mut self, event: GossipsubEvent) {
+        if let GossipsubEvent::Message { 
+            message, 
+            propagation_source: _,
+            message_id: _, 
+        } = event {
+            let res = self.app_sender.send(message.data);
             if let Err(e) =  res {
                 error!("Error communicating with main application {}", e);
             }
-            // Only other information available to us = peer ID of source
         }
     }
 }
@@ -61,13 +70,13 @@ impl NetworkBehaviourEventProcess<MdnsEvent> for AppBehaviour {
         match event {
             MdnsEvent::Discovered(discovered_list) => {
                 for (peer, _addr) in discovered_list {
-                    self.floodsub.add_node_to_partial_view(peer);
+                    self.gossipsub.add_explicit_peer(&peer);
                 }
             }
             MdnsEvent::Expired(expired_list) => {
                 for (peer, _addr) in expired_list {
                     if !self.mdns.has_node(&peer) {
-                        self.floodsub.remove_node_from_partial_view(&peer);
+                        self.gossipsub.remove_explicit_peer(&peer);
                     }
                 }
             }
@@ -79,38 +88,33 @@ impl NetworkStack {
 
     pub async fn new(topic_name: &str, app_sender: mpsc::UnboundedSender<Vec<u8>>) ->Self {
         
-        // Metadata
+        // Key and identification
         let keys = identity::Keypair::generate_ed25519();
         let peer_id = PeerId::from(keys.public());
+        println!("Local peer id: {:?}", peer_id);
+        // Topic to listen on
         let topic = Topic::new(topic_name);
-        let auth_keys = noise::Keypair::<noise::X25519Spec>::new()
-            .into_authentic(&keys)
-            .expect("Can't create auth keys for p2p channel");
 
-        // Initialize the network and transport
-        let mut behaviour = AppBehaviour { 
-            floodsub: Floodsub::new(peer_id),
-            mdns: Mdns::new(Default::default()).await.expect("Can't set up peer discovery protocol"),
+        let transport = NetworkStack::create_transport(&keys).await;
+        let gossipsub = NetworkStack::init_gossipsub(&topic, &keys);
+        let mdns = Mdns::new(Default::default()).await.expect("Can't set up peer discovery protocol");
+
+        // **** create the swarm ****
+        let behaviour = AppBehaviour { 
+            gossipsub: gossipsub,
+            mdns: mdns,
             app_sender: app_sender,
         };
-
-        behaviour.floodsub.subscribe(topic.clone());        
-        
-        let transp = TokioTcpConfig::new()  
-            .upgrade(upgrade::Version::V1)
-            .authenticate(noise::NoiseConfig::xx(auth_keys).into_authenticated())
-            .multiplex(mplex::MplexConfig::new())
-            .boxed(); // Put it on the heap
-
-        let mut swarm = SwarmBuilder::new(transp, behaviour, peer_id)
+        let mut swarm = SwarmBuilder::new(transport, behaviour, peer_id)
             .executor(Box::new(|fut| {
                 tokio::spawn(fut);
             }))
             .build();
-
-        swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse().expect("Can't get a local socket"))
-            .expect("Can't start swarm!");
         
+        swarm
+            .listen_on("/ip4/0.0.0.0/tcp/0".parse().unwrap())
+            .expect("Can't set up local socket.");
+
         Self{ 
             swarm: swarm,
             topic: topic, 
@@ -118,19 +122,69 @@ impl NetworkStack {
     }
 
     pub fn broadcast_message(&mut self, message: Vec<u8>) {
-        assert!(message.len() <= MAX_MSG_SIZE);
-        self
-            .swarm
+        let res = self.swarm
             .behaviour_mut()
-            .floodsub
+            .gossipsub
             .publish(self.topic.clone(), message);
+        if let Err(e) = res {
+            panic!("Failed to send message over GossipSub protocol: {:?}", e);
+        }
     }
 
     // Polling happens via stream
     pub async fn clear_unhandled_event(&mut self) {
-        // Returns future that resolves when next item in stream returns
-        // (Won't resolve to `none` if stream is empty)
         self.swarm.select_next_some().await;
+    }
+
+
+    // ---- HELPERS FOR SETUP ---- 
+
+    async fn create_transport(keys: &identity::Keypair) 
+        -> transport::Boxed<(PeerId, muxing::StreamMuxerBox)> {
+        // Needed for configuring encryption on the transport layer
+        let auth_keys = noise::Keypair::<noise::X25519Spec>::new()
+            .into_authentic(&keys)
+            .expect("Can't create auth keys for p2p channel");
+        
+        // Create encrypted transport layer
+        let transport = TokioTcpConfig::new()
+            .nodelay(true)
+            .upgrade(upgrade::Version::V1)
+            .authenticate(noise::NoiseConfig::xx(auth_keys).into_authenticated())
+            .multiplex(mplex::MplexConfig::new())
+            .boxed();
+
+        transport
+    }
+
+    fn init_gossipsub(topic: &Topic, keys: &identity::Keypair) -> gossipsub::Gossipsub {
+        // Create a function for (content-addressing) messages
+        let message_id_gen = |message: &GossipsubMessage| {
+            let mut s = DefaultHasher::new();
+            message.data.hash(&mut s);
+            MessageId::from(s.finish().to_string())
+        };
+        
+        // Set up the gossipsub configuration
+        let gossipsub_config = gossipsub::GossipsubConfigBuilder::default() 
+            .heartbeat_interval(Duration::from_secs(10))
+            .validation_mode(ValidationMode::Strict)
+            .message_id_fn(message_id_gen)
+            .build()
+            .expect("Can't set up GossipSub configuration");
+
+        let mut gossipsub: gossipsub::Gossipsub = 
+            gossipsub::Gossipsub::new(
+                MessageAuthenticity::Signed(keys.clone()), 
+                gossipsub_config
+                )
+                .expect("Can't set up Gossipsub protocol");
+        
+        // Set up the gossipsub configuration
+        gossipsub.subscribe(&topic).expect("Can't subscribe to topic!");
+
+        gossipsub
+
     }
 
 }
