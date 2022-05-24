@@ -24,13 +24,10 @@ use log::error;
 use std::time::Duration;
 use log::info;
 
-// static MAX_MSG_SIZE : usize = 1974;
 
 pub struct NetworkStack {
     // Access to network functionality
     swarm: Swarm<AppBehaviour>,
-    // For broadcasting messages
-    topic: Topic,
     // Optional: if you want to have a time-bound,
     // initialization period; a topic to subscribe to &
     // unsubscribe from.
@@ -92,17 +89,15 @@ impl NetworkBehaviourEventProcess<MdnsEvent> for AppBehaviour {
 
 impl NetworkStack {
 
-    pub async fn new(topic_name: &str, app_sender: mpsc::UnboundedSender<Vec<u8>>) ->Self {
+    pub async fn new(topic_names: Vec<&String>, app_sender: mpsc::UnboundedSender<Vec<u8>>) ->Self {
         
         // Key and identification
         let keys = identity::Keypair::generate_ed25519();
         let peer_id = PeerId::from(keys.public());
         println!("Local peer id: {:?}", peer_id);
-        // Topic to listen on
-        let topic = Topic::new(topic_name);
 
         let transport = NetworkStack::create_transport(&keys).await;
-        let gossipsub = NetworkStack::init_gossipsub(&topic, &keys);
+        let gossipsub = NetworkStack::init_gossipsub(topic_names, &keys);
         let mdns = Mdns::new(Default::default()).await.expect("Can't set up peer discovery protocol");
 
         // **** create the swarm ****
@@ -123,19 +118,18 @@ impl NetworkStack {
 
         let init_topic = Topic::new("init");
 
-        Self{ 
+        Self { 
             swarm: swarm,
-            topic: topic, 
             init_topic: init_topic, 
             init_open: false,
         }
     }
 
-    pub fn broadcast_message(&mut self, message: Vec<u8>) {
+    pub fn broadcast_message(&mut self, channel: &String, message: Vec<u8>) {
         let res = self.swarm
             .behaviour_mut()
             .gossipsub
-            .publish(self.topic.clone(), message);
+            .publish(Topic::new(channel), message);
         if let Err(e) = res {
             panic!("Failed to send message over GossipSub protocol: {:?}", e);
         }
@@ -209,7 +203,7 @@ impl NetworkStack {
         transport
     }
 
-    fn init_gossipsub(topic: &Topic, keys: &identity::Keypair) -> gossipsub::Gossipsub {
+    fn init_gossipsub(topic_names: Vec<&String>, keys: &identity::Keypair) -> gossipsub::Gossipsub {
         // Create a function for (content-addressing) messages
         let message_id_gen = |message: &GossipsubMessage| {
             let mut s = DefaultHasher::new();
@@ -233,7 +227,9 @@ impl NetworkStack {
                 .expect("Can't set up Gossipsub protocol");
         
         // Set up the gossipsub configuration
-        gossipsub.subscribe(&topic).expect("Can't subscribe to topic!");
+        for topic_name in topic_names {
+            gossipsub.subscribe(&Topic::new(topic_name)).expect("Can't subscribe to topic!");
+        }
 
         gossipsub
 

@@ -27,12 +27,15 @@ pub struct StreamletInstance {
     expected_peer_count: usize,
     keypair: Keypair,
     public_keys: Vec<PublicKey>,
+    p2p_channel: String,
 }
 enum EventType {
     UserInput(String),
     NetworkInput(Vec<u8>),
     DoInit,
 }
+
+const P2P_CHANNEL : &str = "test_messages";
 
 // ==========================
 // === Core Streamlet API ===
@@ -67,6 +70,7 @@ impl StreamletInstance {
             name: name,
             keypair: keypair,
             public_keys: Vec::from([pk]),
+            p2p_channel: P2P_CHANNEL.to_string(),
         }
     }
 
@@ -78,7 +82,7 @@ impl StreamletInstance {
         let (net_sender, mut receiver) = mpsc::unbounded_channel();
 
         // Initialize the network stack
-        let mut net_stack = network::NetworkStack::new("test_messages", net_sender).await;
+        let mut net_stack = network::NetworkStack::new(vec!(&self.p2p_channel), net_sender).await;
 
         // Set up stdin
         let mut stdin = BufReader::new(stdin()).lines();
@@ -144,7 +148,7 @@ impl StreamletInstance {
 
                             println!("Sending message {:?}", message);
 
-                            net_stack.broadcast_message(message.serialize());
+                            net_stack.broadcast_message(&self.p2p_channel, message.serialize());
                         }
                     }
                     EventType::NetworkInput(bytes) => {
