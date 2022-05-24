@@ -1,17 +1,16 @@
-use bincode::{deserialize, serialize};
-use serde::{Deserialize, Serialize};
 use std::vec::Vec;
+use bincode::{serialize, deserialize};
+use serde::{Serialize, Deserialize};
 
-use crate::blockchain::Block;
-use crate::network::peer_init::PeerAdvertisement;
 use crate::utils::crypto::*;
+use crate::blockchain::Block;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     pub payload: MessagePayload,
     pub kind: MessageKind,
     pub nonce: u32,
-    pub signatures: Option<Vec<Signature>>,
+    pub signatures: Vec<Signature>,
 }
 
 impl Message {
@@ -19,12 +18,12 @@ impl Message {
     pub fn serialize_payload(&self) -> Vec<u8> {
         return self.payload.serialize();
     }
-    pub fn serialize(&self) -> Vec<u8> {
-        let encoded: Vec<u8> = serialize(self).expect("Failed serialization.");
+    pub fn serialize(&self) ->  Vec<u8> {
+        let encoded: Vec<u8> = serialize(self).unwrap();  // TODO handle errors?
         return encoded;
     }
     pub fn deserialize(encoded: &Vec<u8>) -> Message {
-        let decoded: Message = deserialize(&encoded[..]).expect("Failed deserialization.");
+        let decoded: Message = deserialize(&encoded[..]).unwrap();  // TODO handle errors?
         return decoded;
     }
 }
@@ -33,13 +32,12 @@ impl Message {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MessagePayload {
     Block(Block),
-    String(String),
-    PeerAdvertisement(PeerAdvertisement),
+    String(String),  
 }
 
 // Useful for serializing the payload (block) so we can sign it
 impl MessagePayload {
-    pub fn serialize(&self) -> Vec<u8> {
+    pub fn serialize(&self) ->  Vec<u8> {
         let encoded: Vec<u8> = serialize(self).unwrap();
         return encoded;
     }
@@ -54,7 +52,6 @@ pub enum MessageKind {
     Vote,
     Propose,
     Test,
-    Init,
 }
 
 #[cfg(test)]
@@ -63,34 +60,28 @@ mod tests {
 
     #[test]
     fn test_message_serdes() {
+
         // Create random hash
         let mut hasher = Sha256::new();
         hasher.update(b"hello world");
         let result = hasher.finalize();
-        let bytes: Sha256Hash = result
-            .as_slice()
-            .try_into()
-            .expect("slice with incorrect length");
-
+        let bytes: Sha256Hash = result.as_slice().try_into().expect("slice with incorrect length");
+        
         // Create a test block
-        let blk = Block {
-            parent_hash: bytes,
-            epoch: 0,
-            data: String::from("test"),
-        };
+        let blk = Block::test_block(&String::from("message test"));
 
         // Create a message
         let message = Message {
             payload: MessagePayload::Block(blk),
             kind: MessageKind::Vote,
             nonce: 0,
-            signatures: Some(Vec::new()),
+            signatures: Vec::new(),
         };
 
         // Serdes
         let serialized_message = message.serialize();
         let deserialized_message = Message::deserialize(&serialized_message);
-
+       
         assert_eq!(message, deserialized_message);
     }
 }
