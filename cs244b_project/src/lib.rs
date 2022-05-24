@@ -131,6 +131,9 @@ impl StreamletInstance {
                     EventType::UserInput(line) => {
                         if line.starts_with("end discovery") || line.starts_with("e d") {
                             peers.send_end_init(&mut net_stack);
+                        } else if line.starts_with("send discovery") || line.starts_with("s d") {
+                            // GossipSub sometimes needs to be restarted
+                            peers.advertise_self(&mut net_stack);
                         } else {
                             println!("User input!");
 
@@ -149,13 +152,14 @@ impl StreamletInstance {
                     }
                     EventType::NetworkInput(bytes) => {
                         let message = Message::deserialize(&bytes);
-                        println!("Received message: {:?}", message);
                         // TODO add more message logic
                         match message.payload {
                             MessagePayload::PeerAdvertisement(ad) => {
                                 peers.recv_advertisement(ad, &mut net_stack);
                             }
-                            _ => {}
+                            _ => {
+                                println!("Received message: {:?}", message);
+                            }
                         };
                     }
                     EventType::DoInit => {

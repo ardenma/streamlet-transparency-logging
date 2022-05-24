@@ -34,7 +34,7 @@ impl Peers {
             let rand: u32 = rand::thread_rng().gen();
             my_name = format!("{}", rand).to_string();
         }
-        info!("Initializing peer with name {}", my_name);
+        println!("Initializing peer with name {}", my_name);
         Self {
             node_name: my_name,
             public_key: public_key,
@@ -52,7 +52,7 @@ impl Peers {
         if net_stack.init_channel_open() {
             return;
         }
-        info!(
+        println!(
             "{} is starting initialization; adding {} peers",
             self.node_name, expected_count
         );
@@ -80,7 +80,7 @@ impl Peers {
             );
             return;
         }
-        info!("{} adding peer: {}", self.node_name, ad.node_name);
+        println!("{} adding peer: {}", self.node_name, ad.node_name);
         self.peer_list.insert(ad.node_name, ad.public_key);
 
         if !ad.known_peers.contains(&self.node_name) {
@@ -88,7 +88,7 @@ impl Peers {
         }
 
         if self.is_done() && net_stack.init_channel_open() {
-            info!(
+            println!(
                 "{} is done with peer discovery protocol; discovered {} peer(s)",
                 self.node_name,
                 self.peer_list.len()
@@ -127,7 +127,7 @@ impl Peers {
         if !net_stack.init_channel_open() {
             return;
         }
-        info!("ending init protocol");
+        println!("ending init protocol");
         info!("Final state: {:?}", self.peer_list);
         net_stack.close_init_channel();
     }
@@ -147,7 +147,10 @@ impl Peers {
         }
     }
 
-    fn advertise_self(&mut self, net_stack: &mut NetworkStack) {
+    pub fn advertise_self(&mut self, net_stack: &mut NetworkStack) {
+        if !net_stack.init_channel_open() {
+            return;
+        }
         let my_ad = PeerAdvertisement {
             end_init: false,
             node_name: self.node_name.clone(),
