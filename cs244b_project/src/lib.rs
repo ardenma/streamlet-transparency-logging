@@ -40,7 +40,10 @@ enum EventType {
 // ==========================
 
 impl StreamletInstance {
-    // Creates a new Streamlet Instance
+    /* Initializer:
+        @param id: id number identifying the node (used for leader election)
+        @param expected_peer_count: expected number of StreamletInstances running
+        @param my_name: identifying "name" of this node */
     pub fn new(id: u32, expected_peer_count: usize, name: String) -> Self {
         // Setup public/private key pair
         let mut csprng = OsRng {};
@@ -60,7 +63,10 @@ impl StreamletInstance {
         }
     }
 
-    // Main Streamlet event loop
+    /* Main straemlet event loop.
+        1. Intializes networking stack + input channels (e.g. stdin)
+        2. Performs peer discovery
+        3. Runs the main event loop */
     pub async fn run(&self) {
         // Initialize
         // (1) message queue for the network to send us data
@@ -166,10 +172,15 @@ impl StreamletInstance {
 // =========================
 
 impl StreamletInstance {
+    /* Signs an arbitrary slice of bytes
+        @param bytes: arbitrary bytes to sign
+        Note: should get rid of this? mainly for testing */
     fn sign(&self, bytes: &[u8]) -> Signature {
         return self.keypair.sign(bytes);
     }
 
+    /* Signs a message's payload and adds the signature to the message
+        @param message: the message instance with a payload to be signed */
     fn sign_message(&self, message: &mut Message) {
         match &message.signatures {
             Some(_) => {
@@ -182,6 +193,10 @@ impl StreamletInstance {
         }
     }
 
+    /* Verifies a (message, signature) pair against a public key.
+        @param message: the message instance with a (signature, payload) pair to be validated
+        @param signature: signature of the message to be validated
+        @param pk: public key to verify against the signature */
     fn verify_signature(&self, message: &Message, signature: &Signature, pk: &PublicKey) -> bool {
         let result = pk.verify(message.serialize_payload().as_slice(), signature);
         if let Err(error) = result {
@@ -191,33 +206,36 @@ impl StreamletInstance {
         }
     }
 
-    // Kind of dumb, should make more efficient
-    fn verify_message(&self, message: &Message) -> bool {
+    /* Verifies message signatures against all known public keys, returning the number of valid signatures
+        @param message: the message instance with signatures to be validated */
+    fn verify_message(&self, message: &Message) -> i32 {
+        let mut num_valid_signatures = 0;
         let signatures = message.signatures.as_ref().unwrap(); // Check all signatures
+        
+        // Check all sigatures on the message
         for signature in signatures.iter() {
             // Check against all known pk's
-            let mut success = false;
             for pk in self.public_keys.iter() {
                 if self.verify_signature(message, signature, pk) {
-                    success = true;
+                    num_valid_signatures += 1;
                     break;
                 }
             }
-            if !success {
-                return false;
-            }
         }
-        return true;
+        return num_valid_signatures;
     }
 
+    /* Determines epoch leader using deterministic hash function.
+        @param epoch: epoch number */
     fn get_epoch_leader(&self, epoch: u32) -> u32 {
         let mut hasher = DefaultHasher::new();
         hasher.write_u32(epoch);
         let result = hasher.finish() as u32;
         return result % (self.expected_peer_count as u32); // Assumes 0 indexing!
     }
-
-    // For testing
+    /* Determines epoch leader using deterministic hash function.
+        @param epoch: epoch number
+        Note: for testing, should be taken care of in peer discovery. */
     pub fn add_public_key(&mut self, pk: PublicKey) {
         self.public_keys.push(pk.clone());
     }
@@ -278,12 +296,12 @@ mod tests {
         // Adding public keys to streamlet1
         streamlet1.add_public_key(streamlet2.get_public_key());
         let bad_result = streamlet1.verify_message(&message);
-        assert!(bad_result == false);
+        assert!(bad_result == 2);
         streamlet1.add_public_key(streamlet3.get_public_key());
         assert!(streamlet1.public_keys.len() == 3);
 
         // Verify message with all signatures
         let good_result = streamlet1.verify_message(&message);
-        assert!(good_result == true);
+        assert!(good_result == 3);
     }
 }
