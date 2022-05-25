@@ -9,28 +9,25 @@ pub struct Block {
     pub hash: Sha256Hash,
     pub parent_hash: Sha256Hash,
     pub data: String, // some stringified version of a vec<Transaction>
-    pub votes: Vec<String>,
     pub nonce: u64,
 }
 
 impl Block {
-    pub fn new(epoch: i64, parent_hash: Sha256Hash, payload: &String, nonce: u64) -> Self {
+    pub fn new(epoch: i64, parent_hash: Sha256Hash, payload: String, nonce: u64) -> Self {
         // Create random hash
         let mut hasher = Sha256::new();
-        hasher.update(payload);
+        hasher.update(&payload);
         let result = hasher.finalize();
         let bytes: Sha256Hash = result
             .as_slice()
             .try_into()
             .expect("slice with incorrect length");
 
-        let payload_string = String::from(payload);
         Self {
             epoch,
             hash: bytes,
             parent_hash,
-            data: payload_string,
-            votes: vec![],
+            data: payload,
             nonce,
         }
     }
@@ -63,14 +60,7 @@ impl Block {
             .try_into()
             .expect("slice with incorrect length");
 
-        Block {
-            parent_hash: bytes,
-            hash: bytes,
-            epoch: -1,
-            data: String::from("foo"),
-            votes: vec![],
-            nonce: 0,
-        }
+        return Block::new(-1, bytes, String::from("test"), 0);
     }
 }
 
@@ -90,30 +80,9 @@ mod tests {
             .expect("slice with incorrect length");
 
         // Create some blocks
-        let blk1 = Block {
-            parent_hash: bytes,
-            hash: bytes,
-            epoch: 0,
-            data: String::from("foo"),
-            votes: vec![],
-            nonce: 0,
-        };
-        let blk2 = Block {
-            parent_hash: bytes,
-            hash: bytes,
-            epoch: 0,
-            data: String::from("bar"),
-            votes: vec![],
-            nonce: 0,
-        };
-        let blk3 = Block {
-            parent_hash: bytes,
-            hash: bytes,
-            epoch: 0,
-            data: String::from("bar"),
-            votes: vec![],
-            nonce: 0,
-        };
+        let blk1 = Block::new(0, bytes, String::from("foo"), 0);
+        let blk2 = Block::new(0, bytes, String::from("bar"), 0);
+        let blk3 = Block::new(0, bytes, String::from("bar"), 0);
 
         assert_ne!(blk1.hash(), blk2.hash());
         assert_eq!(blk2.hash(), blk3.hash());

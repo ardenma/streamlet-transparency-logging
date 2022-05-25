@@ -257,14 +257,7 @@ mod tests {
             .expect("slice with incorrect length");
 
         // Create a test block
-        let blk = Block {
-            epoch: 0,
-            hash: bytes,
-            parent_hash: bytes,
-            data: String::from("test"),
-            votes: vec![],
-            nonce: 0,
-        };
+        let blk = Block::new(0, bytes, String::from("test"), 0);
 
         // Create a message
         let mut message = Message {

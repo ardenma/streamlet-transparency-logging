@@ -53,14 +53,13 @@ impl Player {
             hash: bytes,
             parent_hash,
             data: self.unconfirmed_pending_transactions.clone(),
-            votes: vec![],
             nonce,
         }
     }
     pub fn vote(&self, mut block: Block) -> Message {
         // Create a message
         let public_key_copy = self.public_key.clone();
-        block.votes.push(public_key_copy.clone()); // I couldn't tell from the paper if you append your own vote to the block before broadcast
+        // block.votes.push(public_key_copy.clone()); // I couldn't tell from the paper if you append your own vote to the block before broadcast
         let message = Message {
             payload: MessagePayload::Block(block),
             kind: MessageKind::Vote,
@@ -72,7 +71,8 @@ impl Player {
         return message;
     }
     pub fn is_notarized_block(&self, block: &Block) -> bool {
-        return block.votes.len() >= ((self.player_pool_size / 2) as usize);
+        // return block.votes.len() >= ((self.player_pool_size / 2) as usize);
+        todo!()
     }
     pub fn notarize_chain(&mut self, chain: LocalChain) -> bool {
         for i in 0..chain.blocks.len() {
