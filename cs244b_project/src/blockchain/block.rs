@@ -5,15 +5,16 @@ use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Block {
-    pub epoch: i64,
-    pub hash: Sha256Hash,
-    pub parent_hash: Sha256Hash,
-    pub data: String, // some stringified version of a vec<Transaction>
-    pub nonce: u64,
+    pub epoch: i64,        // epoch the block was proposed in
+    pub hash: Sha256Hash,  // hash of the block
+    pub parent_hash: Sha256Hash,  // hash of the parent block
+    pub data: String,      // some stringified version of a vec<Transaction>
+    pub height: u64,       // metadata to make constructing chains easier
+    pub nonce: u64,        // not sure what this is for? maybe helpful lol
 }
 
 impl Block {
-    pub fn new(epoch: i64, parent_hash: Sha256Hash, data: String, nonce: u64) -> Self {
+    pub fn new(epoch: i64, parent_hash: Sha256Hash, data: String, height: u64, nonce: u64) -> Self {
         // create a Sha256 object
         let mut hasher = Sha256::new();
 
@@ -33,7 +34,8 @@ impl Block {
             epoch,
             hash: bytes,
             parent_hash,
-            data: data,
+            data,
+            height,
             nonce,
         }
     }
@@ -47,7 +49,7 @@ impl Block {
             .try_into()
             .expect("slice with incorrect length");
 
-        return Block::new(-1, bytes, String::from("test"), 0);
+        return Block::new(-1, bytes, String::from("test"), 0, 0);
     }
 }
 
@@ -67,9 +69,9 @@ mod tests {
             .expect("slice with incorrect length");
 
         // Create some blocks
-        let blk1 = Block::new(0, bytes, String::from("foo"), 0);
-        let blk2 = Block::new(0, bytes, String::from("bar"), 0);
-        let blk3 = Block::new(0, bytes, String::from("bar"), 0);
+        let blk1 = Block::new(0, bytes, String::from("foo"), 0, 0);
+        let blk2 = Block::new(0, bytes, String::from("bar"), 0, 0);
+        let blk3 = Block::new(0, bytes, String::from("bar"), 0, 0);
 
         assert_ne!(blk1.hash, blk2.hash);
         assert_eq!(blk2.hash, blk3.hash);

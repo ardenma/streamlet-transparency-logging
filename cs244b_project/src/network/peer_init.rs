@@ -17,9 +17,9 @@ pub struct Peers {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PeerAdvertisement {
+    pub public_key: PublicKey,
     end_init: bool,
     node_name: String,
-    public_key: PublicKey,
     known_peers: Vec<String>,
 }
 

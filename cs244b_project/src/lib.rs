@@ -1,7 +1,6 @@
 mod blockchain;
 mod messages;
 mod network;
-mod player;
 mod utils;
 
 use std::collections::hash_map::DefaultHasher;
@@ -15,8 +14,9 @@ use tokio::{
     sync::mpsc,
     time::sleep,
 };
+use log::info;
 
-pub use blockchain::{Block, Chain, LocalChain};
+pub use blockchain::{Block, Chain, LocalChain, BlockchainManager};
 pub use messages::{Message, MessageKind, MessagePayload};
 pub use network::peer_init;
 pub use network::NetworkStack;
@@ -25,7 +25,9 @@ pub use utils::crypto::*;
 pub struct StreamletInstance {
     pub id: u32,
     pub name: String,
+    pub is_leader: bool,
     expected_peer_count: usize,
+    blockchain_manager: BlockchainManager,
     keypair: Keypair,
     public_keys: Vec<PublicKey>,
 }
@@ -50,15 +52,14 @@ impl StreamletInstance {
         let keypair: Keypair = Keypair::generate(&mut csprng);
         let pk: PublicKey = keypair.public.clone();
 
-        // Encode genesis block (probably should throw this in the chain instead)
-        let genesis = LocalChain::new().genesis();
-
         // Build the streamlet instance
         Self {
             id: id,
             expected_peer_count: expected_peer_count,
+            is_leader: false,
             name: name,
             keypair: keypair,
+            blockchain_manager: BlockchainManager::new(),
             public_keys: Vec::from([pk]),
         }
     }
@@ -67,7 +68,7 @@ impl StreamletInstance {
         1. Intializes networking stack + input channels (e.g. stdin)
         2. Performs peer discovery
         3. Runs the main event loop */
-    pub async fn run(&self) {
+    pub async fn run(&mut self) {
         // Initialize
         // (1) message queue for the network to send us data
         // (2) message queue for us to receive data from the network
@@ -138,21 +139,24 @@ impl StreamletInstance {
                                 signatures: None,
                             };
 
-                            println!("Sending message {:?}", message);
+                            info!("Sending message {:?}", message);
 
                             net_stack.broadcast_message(message.serialize());
                         }
                     }
                     EventType::NetworkInput(bytes) => {
                         let message = Message::deserialize(&bytes);
-                        println!("Received message: {:?}", message);
-                        // TODO add more message logic
+                        info!("Received message: {:?}", message);
+                        
+                        // Message Processing Logic
                         match message.payload {
                             MessagePayload::PeerAdvertisement(ad) => {
+                                self.add_public_key(&ad.public_key);
                                 peers.recv_advertisement(ad, &mut net_stack);
                             }
                             _ => {}
                         };
+
                     }
                     EventType::DoInit => {
                         peers.start_init(&mut net_stack, self.expected_peer_count);
@@ -208,7 +212,7 @@ impl StreamletInstance {
 
     /* Verifies message signatures against all known public keys, returning the number of valid signatures
         @param message: the message instance with signatures to be validated */
-    fn verify_message(&self, message: &Message) -> i32 {
+    fn verify_message(&self, message: &Message) -> usize {
         let mut num_valid_signatures = 0;
         let signatures = message.signatures.as_ref().unwrap(); // Check all signatures
         
@@ -225,6 +229,12 @@ impl StreamletInstance {
         return num_valid_signatures;
     }
 
+    /* Determines if the block associated with a message is notarized.
+        @param epoch: epoch number */
+    pub fn is_notarized(&self, message: &Message) -> bool {
+        return self.verify_message(message) >= self.expected_peer_count / 2;
+    }
+
     /* Determines epoch leader using deterministic hash function.
         @param epoch: epoch number */
     fn get_epoch_leader(&self, epoch: i64) -> u32 {
@@ -236,7 +246,7 @@ impl StreamletInstance {
     /* Determines epoch leader using deterministic hash function.
         @param epoch: epoch number
         Note: for testing, should be taken care of in peer discovery. */
-    pub fn add_public_key(&mut self, pk: PublicKey) {
+    pub fn add_public_key(&mut self, pk: &PublicKey) {
         self.public_keys.push(pk.clone());
     }
 }
@@ -275,7 +285,7 @@ mod tests {
             .expect("slice with incorrect length");
 
         // Create a test block
-        let blk = Block::new(0, bytes, String::from("test"), 0);
+        let blk = Block::new(0, bytes, String::from("test"), 0, 0);
 
         // Create a message
         let mut message = Message {
@@ -294,10 +304,10 @@ mod tests {
         assert!(message.signatures.as_ref().unwrap().len() == 3);
 
         // Adding public keys to streamlet1
-        streamlet1.add_public_key(streamlet2.get_public_key());
+        streamlet1.add_public_key(&streamlet2.get_public_key());
         let bad_result = streamlet1.verify_message(&message);
         assert!(bad_result == 2);
-        streamlet1.add_public_key(streamlet3.get_public_key());
+        streamlet1.add_public_key(&streamlet3.get_public_key());
         assert!(streamlet1.public_keys.len() == 3);
 
         // Verify message with all signatures
