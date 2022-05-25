@@ -78,7 +78,8 @@ mod tests {
             hash: bytes,
             parent_hash: bytes,
             data: String::from("test"),
-            nonce: 0
+            votes: vec![],
+            nonce: 0,
         };
 
         // Create a message

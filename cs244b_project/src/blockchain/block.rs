@@ -1,8 +1,7 @@
-use sha2::{Sha256, Digest};
+pub use crate::utils::crypto::*;
 use crate::Sha256Hash;
-use serde::{Serialize, Deserialize};
-
-use crate::utils::crypto::*;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Block {
@@ -10,7 +9,7 @@ pub struct Block {
     pub hash: Sha256Hash,
     pub parent_hash: Sha256Hash,
     pub data: String, // some stringified version of a vec<Transaction>
-    // pub signatures: Vec<Signature>,  // arden: dropping for simplicity of merging
+    pub votes: Vec<String>,
     pub nonce: u64,
 }
 
@@ -20,7 +19,10 @@ impl Block {
         let mut hasher = Sha256::new();
         hasher.update(payload);
         let result = hasher.finalize();
-        let bytes: Sha256Hash = result.as_slice().try_into().expect("slice with incorrect length");
+        let bytes: Sha256Hash = result
+            .as_slice()
+            .try_into()
+            .expect("slice with incorrect length");
 
         let payload_string = String::from(payload);
         Self {
@@ -28,6 +30,7 @@ impl Block {
             hash: bytes,
             parent_hash,
             data: payload_string,
+            votes: vec![],
             nonce,
         }
     }
@@ -44,7 +47,10 @@ impl Block {
 
         // read hash digest and consume hasher
         let result = hasher.finalize();
-        let bytes = result.as_slice().try_into().expect("slice with incorrect length");
+        let bytes = result
+            .as_slice()
+            .try_into()
+            .expect("slice with incorrect length");
         return bytes;
     }
 
@@ -52,14 +58,18 @@ impl Block {
         let mut hasher = Sha256::new();
         hasher.update(b"hello world");
         let result = hasher.finalize();
-        let bytes: Sha256Hash = result.as_slice().try_into().expect("slice with incorrect length");
+        let bytes: Sha256Hash = result
+            .as_slice()
+            .try_into()
+            .expect("slice with incorrect length");
 
         Block {
             parent_hash: bytes,
             hash: bytes,
             epoch: -1,
             data: String::from("foo"),
-            nonce: 0
+            votes: vec![],
+            nonce: 0,
         }
     }
 }
@@ -70,12 +80,14 @@ mod tests {
 
     #[test]
     fn test_block_hash() {
-
         // Create random hash
         let mut hasher = Sha256::new();
         hasher.update(b"hello world");
         let result = hasher.finalize();
-        let bytes: Sha256Hash = result.as_slice().try_into().expect("slice with incorrect length");
+        let bytes: Sha256Hash = result
+            .as_slice()
+            .try_into()
+            .expect("slice with incorrect length");
 
         // Create some blocks
         let blk1 = Block {
@@ -83,21 +95,24 @@ mod tests {
             hash: bytes,
             epoch: 0,
             data: String::from("foo"),
-            nonce: 0
+            votes: vec![],
+            nonce: 0,
         };
         let blk2 = Block {
             parent_hash: bytes,
             hash: bytes,
             epoch: 0,
             data: String::from("bar"),
-            nonce: 0
+            votes: vec![],
+            nonce: 0,
         };
         let blk3 = Block {
             parent_hash: bytes,
             hash: bytes,
             epoch: 0,
             data: String::from("bar"),
-            nonce: 0
+            votes: vec![],
+            nonce: 0,
         };
 
         assert_ne!(blk1.hash(), blk2.hash());

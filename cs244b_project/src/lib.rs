@@ -1,8 +1,8 @@
 mod blockchain;
 mod messages;
 mod network;
-mod utils;
 mod player;
+mod utils;
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
@@ -193,8 +193,7 @@ impl StreamletInstance {
 
     // Kind of dumb, should make more efficient
     fn verify_message(&self, message: &Message) -> bool {
-        let signatures = message.signatures.as_ref().unwrap();
-        // Check all signatures
+        let signatures = message.signatures.as_ref().unwrap(); // Check all signatures
         for signature in signatures.iter() {
             // Check against all known pk's
             let mut success = false;
@@ -263,7 +262,8 @@ mod tests {
             hash: bytes,
             parent_hash: bytes,
             data: String::from("test"),
-            nonce: 0
+            votes: vec![],
+            nonce: 0,
         };
 
         // Create a message
