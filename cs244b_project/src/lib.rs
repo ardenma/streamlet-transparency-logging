@@ -103,7 +103,7 @@ impl StreamletInstance {
                             payload: MessagePayload::String(_line),
                             kind: MessageKind::Test,
                             nonce: rand,
-                            signatures: None,
+                            signatures: Vec::new(),
                         };
 
                         println!("Sending message {:?}", message);
@@ -135,14 +135,9 @@ impl StreamletInstance {
     }
 
     fn sign_message(&self, message: &mut Message) {
-        match &message.signatures {
-            Some(_) => {
-                let signature: Signature = self.keypair.sign(message.serialize_payload().as_slice());
-                let signatures: &mut Vec<Signature> = message.signatures.as_mut().unwrap();
-                signatures.push(signature)
-            },
-            None => panic!("Tried to add signature to message without signature vector!"),
-        }
+        let signature: Signature = self.keypair.sign(message.serialize_payload().as_slice());
+        let signatures: &mut Vec<Signature> = &mut message.signatures;
+        signatures.push(signature);
     }
 
     fn verify_signature(&self, message: &Message, signature: &Signature, pk: &PublicKey) -> bool {
@@ -156,7 +151,7 @@ impl StreamletInstance {
 
     // Kind of dumb, should make more efficient
     fn verify_message(&self, message: &Message) -> bool {
-        let signatures = message.signatures.as_ref().unwrap();
+        let signatures = &message.signatures; 
         // Check all signatures
         for signature in signatures.iter() {
             // Check against all known pk's

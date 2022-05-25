@@ -2,8 +2,6 @@ use sha2::{Sha256, Digest};
 use crate::Sha256Hash;
 use serde::{Serialize, Deserialize};
 
-use crate::utils::crypto::*;
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Block {
     pub epoch: i64,

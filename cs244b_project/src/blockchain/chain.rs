@@ -12,7 +12,7 @@ pub trait Chain {
     fn validate_block(block: &Block, parent_block: &Block) -> bool;
     fn finalize_block();
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LocalChain {
     pub blocks: Vec<Block>,
 }

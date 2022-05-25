@@ -1,6 +1,6 @@
 use crate::blockchain::*;
 use crate::message::*;
-use crate::Sha256Hash;
+use crate::utils::crypto::*;
 
 pub struct Player {
     pub is_leader: bool,
@@ -55,6 +55,7 @@ impl Player {
     pub fn vote(&self, mut block: Block) -> Message {
         // Create a message
         let public_key_copy = self.public_key.clone();
+        block.votes.push(public_key_copy.clone()); // I couldn't tell from the paper if you append your own vote to the block before broadcast
         let message = Message {
             payload: MessagePayload::Block(block),
             kind: MessageKind::Vote,
@@ -63,11 +64,10 @@ impl Player {
         };
         // there needs to be a check to see if this extends a longest notarized chain which is not a hard check but i'm not sure it should go here...
         // it's just a matter of seeing if the parent hash referenced is extended from the last block on any in the notarized list
-        block.votes.push(public_key_copy.clone()); // I couldn't tell from the paper if you append your own vote to the block before broadcast
         return message;
     }
     pub fn is_notarized_block(&self, block: &Block) -> bool {
-        return block.votes.len().unwrap() >= self.player_pool_size / 2;
+        return block.votes.len() >= ((self.player_pool_size / 2) as usize);
     }
     pub fn notarize_chain(&mut self, chain: LocalChain) -> bool {
         for i in 0..chain.blocks.len() {
@@ -78,25 +78,31 @@ impl Player {
             let block: &Block = chain.blocks.get(i).expect("expected block for notarization check");
             if !self.is_notarized_block(block) { return false; }
         }
+        if chain.blocks.len() >= self.longest_notarized_chain.blocks.len() { 
+            self.longest_notarized_chain = chain.clone();
+        }
         self.notarized_chains.push(chain);
-        if chain.blocks.len().unwrap() >= self.longest_notarized_chain.blocks.len() { self.longest_notarized_chain = chain.clone() }
         return true;
     }
     pub fn finalize(&mut self, notarized_chain: LocalChain) {
         // Check if the last 3 consecutive notarized blocks have sequential epochs and if so, commit the first two to finalized log
         // This may need to be generalized to be an overall loop; can change it then if needed just wasn't sure why it would have to be this way
-        if notarized_chain.blocks.len().unwrap() < 4 { return; }
+        if notarized_chain.blocks.len() < 4 { return; }
         let i = notarized_chain.blocks.len();
-        let newest: &Block = chain.blocks.get(i - 1).expect("expected recent block");
-        let commit_2: &Block = chain.blocks.get(i - 2).expect("expected latter notarized block");
-        let commit_1: &Block = chain.blocks.get(i - 3).expect("expected former notarized block");
+        let newest: &Block = notarized_chain.blocks.get(i - 1).expect("expected recent block");
+        let commit_2: &Block = notarized_chain.blocks.get(i - 2).expect("expected latter notarized block");
+        let commit_1: &Block = notarized_chain.blocks.get(i - 3).expect("expected former notarized block");
         if newest.epoch == commit_2.epoch + 1 && commit_2.epoch == commit_1.epoch + 1 {
-            let last_finalized_block =  self.finalized_log.blocks.last().unwrap_or(&Block::test_block(&String::from("finalization test block")));
+            let last_finalized_block = match self.finalized_log.blocks.last() {
+                Some(b) => { b.clone() },
+                None => { Block::test_block(&String::from("finalization test block")) },
+            };
+
             if last_finalized_block.epoch < commit_1.epoch {
-                self.finalized_log.append_block(*commit_1.clone());
-                self.finalized_log.append_block(*commit_2.clone());
+                self.finalized_log.append_block(commit_1.clone());
+                self.finalized_log.append_block(commit_2.clone());
             } else if last_finalized_block.epoch < commit_2.epoch {
-                self.finalized_log.append_block(*commit_2.clone());
+                self.finalized_log.append_block(commit_2.clone());
             }
         }
 
