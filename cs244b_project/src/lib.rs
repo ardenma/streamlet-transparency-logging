@@ -227,9 +227,9 @@ impl StreamletInstance {
 
     /* Determines epoch leader using deterministic hash function.
         @param epoch: epoch number */
-    fn get_epoch_leader(&self, epoch: u32) -> u32 {
+    fn get_epoch_leader(&self, epoch: i64) -> u32 {
         let mut hasher = DefaultHasher::new();
-        hasher.write_u32(epoch);
+        hasher.write_i64(epoch);
         let result = hasher.finish() as u32;
         return result % (self.expected_peer_count as u32); // Assumes 0 indexing!
     }
