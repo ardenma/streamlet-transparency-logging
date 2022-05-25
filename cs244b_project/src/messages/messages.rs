@@ -74,9 +74,11 @@ mod tests {
 
         // Create a test block
         let blk = Block {
-            parent_hash: bytes,
             epoch: 0,
+            hash: bytes,
+            parent_hash: bytes,
             data: String::from("test"),
+            nonce: 0
         };
 
         // Create a message

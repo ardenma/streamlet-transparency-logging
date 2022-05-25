@@ -1,3 +1,5 @@
-mod blocks;
+mod block;
+mod chain;
 
-pub use blocks::*;
+pub use block::*;
+pub use chain::*;

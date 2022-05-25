@@ -2,6 +2,7 @@ mod blockchain;
 mod messages;
 mod network;
 mod utils;
+mod player;
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
@@ -15,7 +16,7 @@ use tokio::{
     time::sleep,
 };
 
-pub use blockchain::Block;
+pub use blockchain::{Block, Chain, LocalChain};
 pub use messages::{Message, MessageKind, MessagePayload};
 pub use network::peer_init;
 pub use network::NetworkStack;
@@ -47,18 +48,7 @@ impl StreamletInstance {
         let pk: PublicKey = keypair.public.clone();
 
         // Encode genesis block (probably should throw this in the chain instead)
-        let mut hasher = Sha256::new();
-        hasher.update(b"cs244b rocks!");
-        let result = hasher.finalize();
-        let bytes: Sha256Hash = result
-            .as_slice()
-            .try_into()
-            .expect("slice with incorrect length");
-        let genesis = Block {
-            parent_hash: bytes,
-            epoch: 0,
-            data: String::from("this is the genesis block."),
-        };
+        let genesis = LocalChain::new().genesis();
 
         // Build the streamlet instance
         Self {
@@ -269,9 +259,11 @@ mod tests {
 
         // Create a test block
         let blk = Block {
-            parent_hash: bytes,
             epoch: 0,
+            hash: bytes,
+            parent_hash: bytes,
             data: String::from("test"),
+            nonce: 0
         };
 
         // Create a message
