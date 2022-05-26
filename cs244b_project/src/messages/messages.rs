@@ -11,6 +11,8 @@ pub struct Message {
     pub payload: MessagePayload,
     pub kind: MessageKind,
     pub nonce: u32,
+    pub sender_id: u32,
+    pub sender_name: String,
     pub signatures: Option<Vec<Signature>>,
 }
 
@@ -73,14 +75,7 @@ mod tests {
             .expect("slice with incorrect length");
 
         // Create a test block
-        let blk = Block {
-            epoch: 0,
-            hash: bytes,
-            parent_hash: bytes,
-            data: String::from("test"),
-            votes: vec![],
-            nonce: 0,
-        };
+        let blk = Block::new(0, bytes, String::from("test"), 0, 0);
 
         // Create a message
         let message = Message {
@@ -88,6 +83,8 @@ mod tests {
             kind: MessageKind::Vote,
             nonce: 0,
             signatures: Some(Vec::new()),
+            sender_id: 0,
+            sender_name: String::from("test"),
         };
 
         // Serdes

@@ -492,6 +492,7 @@ dependencies = [
  "chrono",
  "ed25519-dalek",
  "hex",
+ "itertools",
  "libp2p",
  "log",
  "once_cell",

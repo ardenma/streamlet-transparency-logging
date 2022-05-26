@@ -5,53 +5,39 @@ use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Block {
-    pub epoch: i64,
-    pub hash: Sha256Hash,
-    pub parent_hash: Sha256Hash,
-    pub data: String, // some stringified version of a vec<Transaction>
-    pub votes: Vec<String>,
-    pub nonce: u64,
+    pub epoch: u64,        // epoch the block was proposed in
+    pub hash: Sha256Hash,  // hash of the block
+    pub parent_hash: Sha256Hash,  // hash of the parent block
+    pub data: String,      // some stringified version of a vec<Transaction>
+    pub height: u64,       // metadata to make constructing chains easier
+    pub nonce: u64,        // not sure what this is for? maybe helpful lol
 }
 
 impl Block {
-    pub fn new(epoch: i64, parent_hash: Sha256Hash, payload: &String, nonce: u64) -> Self {
-        // Create random hash
+    pub fn new(epoch: u64, parent_hash: Sha256Hash, data: String, height: u64, nonce: u64) -> Self {
+        // create a Sha256 object
         let mut hasher = Sha256::new();
-        hasher.update(payload);
+
+        // add block fields
+        hasher.update(parent_hash.as_slice());
+        hasher.update(epoch.to_ne_bytes().as_slice());
+        hasher.update(data.as_bytes());
+        hasher.update(nonce.to_ne_bytes().as_slice());
+
         let result = hasher.finalize();
         let bytes: Sha256Hash = result
             .as_slice()
             .try_into()
             .expect("slice with incorrect length");
 
-        let payload_string = String::from(payload);
         Self {
             epoch,
             hash: bytes,
             parent_hash,
-            data: payload_string,
-            votes: vec![],
+            data,
+            height,
             nonce,
         }
-    }
-
-    pub fn hash(&self) -> Sha256Hash {
-        // create a Sha256 object
-        let mut hasher = Sha256::new();
-
-        // add block fields
-        hasher.update(self.parent_hash.as_slice());
-        hasher.update(self.epoch.to_ne_bytes().as_slice());
-        hasher.update(self.data.as_bytes());
-        hasher.update(self.nonce.to_ne_bytes().as_slice());
-
-        // read hash digest and consume hasher
-        let result = hasher.finalize();
-        let bytes = result
-            .as_slice()
-            .try_into()
-            .expect("slice with incorrect length");
-        return bytes;
     }
 
     pub fn generate_test_block(data: &String) -> Block {
@@ -63,14 +49,7 @@ impl Block {
             .try_into()
             .expect("slice with incorrect length");
 
-        Block {
-            parent_hash: bytes,
-            hash: bytes,
-            epoch: -1,
-            data: String::from("foo"),
-            votes: vec![],
-            nonce: 0,
-        }
+        return Block::new(0, bytes, String::from("test"), 0, 0);
     }
 }
 
@@ -90,32 +69,11 @@ mod tests {
             .expect("slice with incorrect length");
 
         // Create some blocks
-        let blk1 = Block {
-            parent_hash: bytes,
-            hash: bytes,
-            epoch: 0,
-            data: String::from("foo"),
-            votes: vec![],
-            nonce: 0,
-        };
-        let blk2 = Block {
-            parent_hash: bytes,
-            hash: bytes,
-            epoch: 0,
-            data: String::from("bar"),
-            votes: vec![],
-            nonce: 0,
-        };
-        let blk3 = Block {
-            parent_hash: bytes,
-            hash: bytes,
-            epoch: 0,
-            data: String::from("bar"),
-            votes: vec![],
-            nonce: 0,
-        };
+        let blk1 = Block::new(0, bytes, String::from("foo"), 0, 0);
+        let blk2 = Block::new(0, bytes, String::from("bar"), 0, 0);
+        let blk3 = Block::new(0, bytes, String::from("bar"), 0, 0);
 
-        assert_ne!(blk1.hash(), blk2.hash());
-        assert_eq!(blk2.hash(), blk3.hash());
+        assert_ne!(blk1.hash, blk2.hash);
+        assert_eq!(blk2.hash, blk3.hash);
     }
 }
