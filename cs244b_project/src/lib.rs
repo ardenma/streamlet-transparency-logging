@@ -99,12 +99,18 @@ impl StreamletInstance {
             trigger_init.send(0).await.expect("can't send init event");
         });
 
-        // Setup epoch timer trigger thread
-        let (timer_trigger, mut timer_recv) = watch::channel("timer");
+        // Setup epoch timer channel
+        let (timer_trigger, mut timer_recv) = watch::channel("timer_init");
+        let (epoch_trigger, mut epoch_recv) = watch::channel("epoch_trigger");
+
         tokio::spawn(async move {
+            // Wait until signaled that peer discovery is done
+            let _ = timer_recv.changed().await.is_ok();
+
+            // Epoch timer loop
             loop {
                 sleep(Duration::from_secs(EPOCH_LENGTH_S)).await;
-                timer_trigger.send("tick!").expect("Timer reciever closed?");
+                epoch_trigger.send("tick!").expect("Timer reciever closed?");
             };
         });
 
@@ -135,7 +141,7 @@ impl StreamletInstance {
                     },
 
                     // One way to model the timer tick
-                    _tick = timer_recv.changed() => {
+                    _tick = epoch_recv.changed() => {
                         Some(EventType::EpochStart)
                     }
 
@@ -186,7 +192,17 @@ impl StreamletInstance {
                             // Peer advertisement logic
                             MessagePayload::PeerAdvertisement(ad) => {
                                 self.add_public_key(ad.node_id, &ad.public_key);
-                                peers.recv_advertisement(&ad, &mut net_stack);
+                                let status = peers.recv_advertisement(&ad, &mut net_stack);
+                                
+                                // If we complete the peer discovery protocol, start timer
+                                // so that they start at roughly the same time on all nodes...
+                                // TODO do a better job of syncing timers...
+                                match status {
+                                    peer_init::InitStatus::DoneStartTimer => {
+                                        let _ = timer_trigger.send("start!").is_ok();
+                                    }
+                                    _ => {/* Do nothing */}
+                                }
                             }
 
                             // Main Streamlet message logic

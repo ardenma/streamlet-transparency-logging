@@ -25,6 +25,12 @@ pub struct PeerAdvertisement {
     known_peers: Vec<String>,
 }
 
+pub enum InitStatus {
+    InProgress,
+    Done,
+    DoneStartTimer,
+}
+
 impl Peers {
     /* Initializer:
         @param my_name: identifying "name" of this node
@@ -71,17 +77,17 @@ impl Peers {
     Closes the initialization channel if all peers have been received.
     @param ad: PeerAdvertisement received from the network
     @param net_stack: network stack containing an initialization channel to send on. */
-    pub fn recv_advertisement(&mut self, ad: &PeerAdvertisement, net_stack: &mut NetworkStack) {
+    pub fn recv_advertisement(&mut self, ad: &PeerAdvertisement, net_stack: &mut NetworkStack) -> InitStatus {
         if ad.end_init && self.is_done() {
             self.end_init(net_stack);
-            return;
+            return InitStatus::Done;
         }
         if self.is_done() || self.peer_list.contains_key(&ad.node_name) {
             info!(
                 "{} received a duplicate or out-of-scope peer advertisement",
                 self.node_name
             );
-            return;
+            return InitStatus::Done;
         }
         info!("{} adding peer: {}", self.node_name, ad.node_name);
         self.peer_list.insert(ad.node_name.clone(), ad.public_key);
@@ -96,7 +102,10 @@ impl Peers {
                 self.node_name,
                 self.peer_list.len()
             );
+            return InitStatus::DoneStartTimer;
         }
+
+        return InitStatus::InProgress;
     }
 
     /* If all expected advertisements have been received. */
