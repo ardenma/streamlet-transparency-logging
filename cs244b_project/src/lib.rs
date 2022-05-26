@@ -178,7 +178,7 @@ impl StreamletInstance {
                     }
                     EventType::EpochStart => {
                         let leader = self.get_epoch_leader();
-                        debug!("Epoch: {} starting with leader {}...", self.current_epoch, leader);
+                        // debug!("Epoch: {} starting with leader {}...", self.current_epoch, leader);
                  
                         // If I am the current leader, propose a block
                         if leader == &self.name {
@@ -284,7 +284,9 @@ impl StreamletInstance {
 
 
                                     },
-                                    _ => { /* Ignore message */}
+                                    _ => { 
+                                        debug!("Unknown message format - ignoring");
+                                    }
                                 }
                             }
                             _ => {}
