@@ -23,6 +23,7 @@ pub use messages::{Message, MessageKind, MessagePayload};
 pub use network::peer_init;
 pub use network::NetworkStack;
 pub use utils::crypto::*;
+pub use app::app_interface::*;
 
 pub struct StreamletInstance {
     pub id: u32,
@@ -31,11 +32,12 @@ pub struct StreamletInstance {
     current_epoch: u64,
     voted_this_epoch: bool,
     blockchain_manager: BlockchainManager,
-    pending_transactions: VecDeque<String>,
+    pending_transactions: VecDeque<Vec<u8>>,
     keypair: Keypair,
     public_keys: HashMap<String, PublicKey>,
     sorted_peer_names: Vec<String>,
 }
+
 enum EventType {
     UserInput(String),
     NetworkInput(Vec<u8>),
@@ -50,6 +52,9 @@ const EPOCH_LENGTH_S: u64 = 1;
 // ==========================
 
 impl StreamletInstance {
+
+    const STREAMLET_TOPIC: &'static str = "streamlet";
+
     /* Initializer:
         @param my_name: identifying "name" of this node
         @param expected_peer_count: expected number of StreamletInstances running */
@@ -86,7 +91,10 @@ impl StreamletInstance {
         let (net_sender, mut receiver) = mpsc::unbounded_channel();
 
         // Initialize the network stack
-        let mut net_stack = network::NetworkStack::new("test_messages", net_sender).await;
+        let mut net_stack = network::NetworkStack::new(
+            StreamletInstance::STREAMLET_TOPIC, 
+            net_sender
+        ).await;
 
         // Set up stdin
         let mut stdin = BufReader::new(stdin()).lines();
@@ -115,6 +123,8 @@ impl StreamletInstance {
                 epoch_trigger.send("tick!").expect("Timer reciever closed?");
             };
         });
+
+        let app_interface = AppInterface::new(&mut net_stack);
 
         // Main event loop!
         loop {
@@ -160,10 +170,13 @@ impl StreamletInstance {
                     EventType::UserInput(line) => {
                         if line.starts_with("end discovery") || line.starts_with("e d") {
                             peers.send_end_init(&mut net_stack);
-                        } else {
+                        } 
+                        /* 
+                        else {
                             info!("User input... adding '{}' to pending transactions", line);
                             self.pending_transactions.push_back(line);
-                        }
+                        } 
+                        */ 
                     }
                     EventType::EpochStart => {
                         self.voted_this_epoch = false;
@@ -214,6 +227,10 @@ impl StreamletInstance {
 
                         // Message processing logic
                         match &message.payload {
+                            // Dat from application 
+                            MessagePayload::AppData(data) => {
+                                self.pending_transactions.push_back(data.clone());
+                            }
                             // Peer advertisement logic
                             MessagePayload::PeerAdvertisement(ad) => {
                                 self.add_public_key(ad.node_name.clone(), &ad.public_key);
@@ -236,7 +253,8 @@ impl StreamletInstance {
                             // Main Streamlet message logic
                             MessagePayload::Block(block) => {
                                 match &message.kind {
-                                    MessageKind::Vote => {
+                                    // TODO: decide whether we think something's legit 
+                                    MessageKind::Vote => {                                                                                                                     
                                         // Currently signing + echoing everything...
                                         // Should probably only sign things we already voted on??
                                         // Note sure... TODO
@@ -247,12 +265,13 @@ impl StreamletInstance {
                                             info!("Epoch: {}, (Vote) received VOTE, signing and broadcasting message {}...", self.current_epoch, new_message.nonce);
                                             net_stack.broadcast_message(new_message.serialize());
                                         }
-
-                                        // Add the received (+ signed by us) message to the chain if its notarized
                                         if self.is_notarized(&new_message) {
                                             info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, adding to chain...", self.current_epoch, message.nonce);
                                             self.blockchain_manager.add_to_chain(block.clone());
-                                        }
+                                        } 
+
+                                        self.pending_transactions.retain(|x| *x != block.data );
+                                    
                                     },
                                     MessageKind::Propose => {
                                         // If we haven't voted  yet this epoch and
@@ -270,7 +289,8 @@ impl StreamletInstance {
                                                 info!("Epoch: {}, (Propose) received PROPOSE, message {} is NOTARIZED, adding to chain...", self.current_epoch, message.nonce);
                                                 self.blockchain_manager.add_to_chain(block.clone());
                                             }
-
+                                            
+                                            self.pending_transactions.retain(|x| *x != block.data );
                                         }
 
 
@@ -454,7 +474,7 @@ mod tests {
             .expect("slice with incorrect length");
 
         // Create a test block
-        let blk = Block::new(0, bytes, String::from("test"), 0, 0);
+        let blk = Block::new(0, bytes, String::from("test").into_bytes(), 0, 0);
 
         // Create a message
         let mut message = Message {
@@ -490,6 +510,6 @@ mod tests {
 
 // ***** APPLICATION *****
 pub async fn run_app() {
-    let app = app::Application::new();
+    let mut app = app::Application::new();
     app.run().await;
 }

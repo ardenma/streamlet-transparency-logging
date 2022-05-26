@@ -30,7 +30,7 @@ impl LocalChain {
             .try_into()
             .expect("slice with incorrect length");
 
-        let genesis_block = Block::new(0, bytes, String::from("genesis payload"), 0, 0);
+        let genesis_block = Block::new(0, bytes, String::from("genesis payload").into_bytes(), 0, 0);
         self.blocks.push(genesis_block.clone());
         return genesis_block;
     }

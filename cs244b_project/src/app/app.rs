@@ -9,6 +9,9 @@ use rand::Rng;
 // use crate::utils::crypto;
 // use crate::messages::*;
 use crate::network::NetworkStack;
+use crate::messages::*;
+use crate::utils::crypto::*;
+use crate::app::app_interface::{APP_NET_TOPIC, APP_SENDER_ID};
 use rand::distributions::Alphanumeric;
 use tokio::{
     io::{stdin, AsyncBufReadExt, BufReader},
@@ -16,9 +19,6 @@ use tokio::{
     sync::mpsc,
 };
 use std::fmt;
-
-/* Also used by the streamlet implementation. */
-const APP_NET_TOPIC: &'static str = "app";
 
 /* The data we append to our internal blockchain includes, 
    for each router on the network:
@@ -30,7 +30,7 @@ const APP_NET_TOPIC: &'static str = "app";
     https://gitweb.torproject.org/torspec.git/tree/dir-spec.txt */
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 struct OnionRouterBasicData {
-    ip: u32,       
+    ip: String,       
     onion_key: String,  
     full_hash: String,
 }
@@ -74,7 +74,12 @@ impl OnionRouterBasicData {
     pub fn new() -> Self {
         let mut gen = rand::thread_rng();
         Self {
-            ip: gen.gen(), 
+            ip: std::net::Ipv4Addr::new(
+                gen.gen_range(0, 255),
+                gen.gen_range(0, 255),
+                gen.gen_range(0, 255),
+                gen.gen_range(0, 255)
+            ).to_string(), 
             onion_key: gen
                 .sample_iter(&Alphanumeric)
                 .take(OnionRouterBasicData::KEY_SIZE)
@@ -115,16 +120,22 @@ enum AppEventType {
     NetworkInput(Vec<u8>),
 }
 
-pub struct Application;
+pub struct Application {
+    keypair: Keypair,
+    curr_nonce: u32,
+}
+
 // State: KeyPair for signatures (eventually)
 
 impl Application { 
 
     pub fn new() -> Self {
-        Self{}
+        let mut csprng = OsRng{};
+        let keypair = Keypair::generate(&mut csprng);
+        Self{ keypair: keypair, curr_nonce: 0 }
     }
 
-    pub async fn run(&self) {
+    pub async fn run(&mut self) {
         // Set up network stack
         // BIG TODO: extend the network stack so that it works both 
         // for streamlet and for the application. 
@@ -163,11 +174,11 @@ impl Application {
                         // Process commands
 
                         // Otherwise: create a new directory 
-                        let dir = OnionRouterNetDirectory::new();
+                        let msg = self.make_data();
                         net_stack.broadcast_message(
-                            serialize(&dir).expect("Can't serialize net directory")
+                            serialize(&msg).expect("Can't serialize msg from app!")
                         );
-                        info!("Sent directory to streamlet: {}", dir);
+                        info!("Sent directory to streamlet: {:?}", msg);
                     }
                     AppEventType::NetworkInput(_input) => {
                         // TODO
@@ -178,6 +189,24 @@ impl Application {
                     }
                 }
             }
+        }
+
+    }
+
+    fn make_data(&mut self) -> Message {
+        let data = serialize(
+            &OnionRouterNetDirectory::new()
+        ).expect("Can't serialize a directory!");
+        let sig = self.keypair.sign(&data);
+        self.curr_nonce += 1;
+        
+        Message {
+            payload: MessagePayload::AppData(data),
+            kind: MessageKind::AppSend,
+            nonce: self.curr_nonce,
+            sender_id: APP_SENDER_ID,
+            sender_name: "app".to_string(),
+            signatures: Some(vec![sig]),
         }
     }
 

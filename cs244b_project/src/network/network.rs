@@ -142,6 +142,25 @@ impl NetworkStack {
         self.swarm.select_next_some().await;
     }
 
+    pub fn add_topic(&mut self, topic: &str) {
+        self.swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&Topic::new(topic))
+            .expect("Can't open new topic channel");
+    }
+
+    pub fn broadcast_to_topic(&mut self, topic: &str, message: Vec<u8>) {
+        let res = self.swarm
+            .behaviour_mut()
+            .gossipsub
+            .publish(Topic::new(topic), message);
+        
+        if let Err(e) = res {
+            panic!("Failed to broadcast to topic {} with error {:?}.", topic, e);
+        }
+    }
+
     // Methods for handling an optional "init" channel.
     // Optional, additional channel that can be opened and closed
     // Can be used for, e.g., a short-term bootstrapping period.

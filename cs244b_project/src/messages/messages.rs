@@ -37,6 +37,7 @@ pub enum MessagePayload {
     Block(Block),
     String(String),
     PeerAdvertisement(PeerAdvertisement),
+    AppData(Vec<u8>),
 }
 
 // Useful for serializing the payload (block) so we can sign it
@@ -57,7 +58,9 @@ pub enum MessageKind {
     Propose,
     Test,
     Init,
-    // Add option(s) for application here
+    // Application-Streamlet config
+    AppRequest,
+    AppSend,
 }
 
 #[cfg(test)]
@@ -76,7 +79,7 @@ mod tests {
             .expect("slice with incorrect length");
 
         // Create a test block
-        let blk = Block::new(0, bytes, String::from("test"), 0, 0);
+        let blk = Block::new(0, bytes, String::from("test").into_bytes(), 0, 0);
 
         // Create a message
         let message = Message {
