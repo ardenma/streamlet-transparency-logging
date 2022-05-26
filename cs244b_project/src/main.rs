@@ -30,7 +30,8 @@ async fn main() {
         }
     };
 
-    let mut streamlet = StreamletInstance::new(0, expected_peer_count, name);
+    let mut streamlet = StreamletInstance::new(name, expected_peer_count);
+
     // Probably want to setup the id, num instances, exchange keys, etc.
     streamlet.run().await; // Runs libp2p event loop
 }

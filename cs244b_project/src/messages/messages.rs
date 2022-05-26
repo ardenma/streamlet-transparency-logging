@@ -11,6 +11,7 @@ pub struct Message {
     pub payload: MessagePayload,
     pub kind: MessageKind,
     pub nonce: u32,
+    pub sender_id: u32,
     pub signatures: Option<Vec<Signature>>,
 }
 
@@ -81,6 +82,7 @@ mod tests {
             kind: MessageKind::Vote,
             nonce: 0,
             signatures: Some(Vec::new()),
+            sender_id: 0,
         };
 
         // Serdes

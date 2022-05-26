@@ -1,4 +1,5 @@
 use crate::blockchain::*;
+use log::info;
 
 // Struct for managing multiple notarized chains and a finalied chain.
 // Provides the abstraction of a single Chain the user can query/manipulate
@@ -62,9 +63,12 @@ impl BlockchainManager {
         // Try to add notarized block to one of the notarized chains
         for chain in self.notarized_chains.iter_mut() {
             if chain.head().hash == notarized_block.parent_hash {
+                info!("Added notarized block with epoch: {}, nonce: {}, parent hash: {:?}, hash: {:?}",
+                      notarized_block.epoch, notarized_block.nonce, notarized_block.parent_hash, notarized_block.hash);
                 chain.append_block(notarized_block);
                 // Update longest notarized chain length if needed
                 if chain.length() > self.longest_notarized_chain_length {
+                    info!("New longest notarized chain length: {}", self.longest_notarized_chain_length);
                     self.longest_notarized_chain_length = chain.length();
                 }
                 success = true;
@@ -125,6 +129,7 @@ impl BlockchainManager {
             // TODO fix to check 6 commits
             self.finalized_chain = notarized_chain.copy_up_to_height(commit_2.height);
             self.finalized_chain_length = self.finalized_chain.length();
+            info!("Successfully finalized chain up to: {}", self.finalized_chain_length);
         }
     }
     pub fn export_local_chain(&self) {

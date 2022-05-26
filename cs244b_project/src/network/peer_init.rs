@@ -10,6 +10,7 @@ use crate::messages::{Message, MessageKind, MessagePayload};
 #[derive(Debug)]
 pub struct Peers {
     pub node_name: String,
+    pub node_id: u32,
     pub public_key: PublicKey,
     pub peer_list: HashMap<String, PublicKey>,
     num_expected: usize,
@@ -18,8 +19,9 @@ pub struct Peers {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PeerAdvertisement {
     pub public_key: PublicKey,
+    pub node_id: u32,
+    pub node_name: String,
     end_init: bool,
-    node_name: String,
     known_peers: Vec<String>,
 }
 
@@ -29,7 +31,7 @@ impl Peers {
             (if empty string, name will be generated from random 32-bit number)
         @param public_key: public key belonging to the owning StreamletInstance
     */
-    pub fn new(mut my_name: String, public_key: PublicKey) -> Self {
+    pub fn new(mut my_name: String, node_id: u32, public_key: PublicKey) -> Self {
         if my_name == "" {
             let rand: u32 = rand::thread_rng().gen();
             my_name = format!("{}", rand).to_string();
@@ -37,6 +39,7 @@ impl Peers {
         info!("Initializing peer with name {}", my_name);
         Self {
             node_name: my_name,
+            node_id: node_id,
             public_key: public_key,
             peer_list: HashMap::new(),
             num_expected: 0,
@@ -68,7 +71,7 @@ impl Peers {
     Closes the initialization channel if all peers have been received.
     @param ad: PeerAdvertisement received from the network
     @param net_stack: network stack containing an initialization channel to send on. */
-    pub fn recv_advertisement(&mut self, ad: PeerAdvertisement, net_stack: &mut NetworkStack) {
+    pub fn recv_advertisement(&mut self, ad: &PeerAdvertisement, net_stack: &mut NetworkStack) {
         if ad.end_init && self.is_done() {
             self.end_init(net_stack);
             return;
@@ -81,7 +84,7 @@ impl Peers {
             return;
         }
         info!("{} adding peer: {}", self.node_name, ad.node_name);
-        self.peer_list.insert(ad.node_name, ad.public_key);
+        self.peer_list.insert(ad.node_name.clone(), ad.public_key);
 
         if !ad.known_peers.contains(&self.node_name) {
             self.advertise_self(net_stack);
@@ -105,6 +108,7 @@ impl Peers {
         let my_ad = PeerAdvertisement {
             end_init: true,
             node_name: String::new(),
+            node_id: rand::thread_rng().gen(),  // TODO should fix... (unlikely) possibliity of collision
             public_key: self.public_key,
             known_peers: Vec::new(),
         };
@@ -113,6 +117,7 @@ impl Peers {
             payload: MessagePayload::PeerAdvertisement(my_ad),
             kind: MessageKind::Init,
             nonce: rand,
+            sender_id: self.node_id,
             signatures: None,
         };
 
@@ -151,6 +156,7 @@ impl Peers {
         let my_ad = PeerAdvertisement {
             end_init: false,
             node_name: self.node_name.clone(),
+            node_id: rand::thread_rng().gen(),  // TODO should fix... (unlikely) possibliity of collision
             public_key: self.public_key,
             known_peers: Vec::from_iter(self.peer_list.keys().cloned()),
         };
@@ -160,6 +166,7 @@ impl Peers {
             payload: MessagePayload::PeerAdvertisement(my_ad),
             kind: MessageKind::Init,
             nonce: rand,
+            sender_id: self.node_id,
             signatures: None,
         };
 
