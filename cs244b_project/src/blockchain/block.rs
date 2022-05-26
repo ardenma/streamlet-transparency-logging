@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Block {
-    pub epoch: i64,        // epoch the block was proposed in
+    pub epoch: u64,        // epoch the block was proposed in
     pub hash: Sha256Hash,  // hash of the block
     pub parent_hash: Sha256Hash,  // hash of the parent block
     pub data: String,      // some stringified version of a vec<Transaction>
@@ -14,7 +14,7 @@ pub struct Block {
 }
 
 impl Block {
-    pub fn new(epoch: i64, parent_hash: Sha256Hash, data: String, height: u64, nonce: u64) -> Self {
+    pub fn new(epoch: u64, parent_hash: Sha256Hash, data: String, height: u64, nonce: u64) -> Self {
         // create a Sha256 object
         let mut hasher = Sha256::new();
 
@@ -49,7 +49,7 @@ impl Block {
             .try_into()
             .expect("slice with incorrect length");
 
-        return Block::new(-1, bytes, String::from("test"), 0, 0);
+        return Block::new(0, bytes, String::from("test"), 0, 0);
     }
 }
 

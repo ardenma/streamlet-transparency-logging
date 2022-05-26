@@ -132,9 +132,21 @@ impl BlockchainManager {
             info!("Successfully finalized chain up to: {}", self.finalized_chain_length);
         }
     }
+
     pub fn export_local_chain(&self) {
         // not totally sure on how to specify the where to export to functionality so for now this just pretty-prints the finalized chain representing the log
         println!("{:?}", self.finalized_chain);
         todo!()
+    }
+
+    pub fn head(&mut self) -> &Block{
+        // Garbage collect
+        self.cleanup_notarized_chains();
+        return self.notarized_chains[0].head();
+    }
+
+    /* Garbage collect all notarized chains which are no longer a "longest notarized chain" */
+    fn cleanup_notarized_chains(&mut self) {
+        self.notarized_chains.retain(|x| x.length() == self.longest_notarized_chain_length);
     }
 }

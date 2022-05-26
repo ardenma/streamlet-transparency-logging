@@ -2,7 +2,8 @@ use ed25519_dalek::PublicKey;
 use log::info;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, alloc::System};
+use std::time::SystemTime;
 
 use super::NetworkStack;
 use crate::messages::{Message, MessageKind, MessagePayload};
@@ -21,6 +22,7 @@ pub struct PeerAdvertisement {
     pub public_key: PublicKey,
     pub node_id: u32,
     pub node_name: String,
+    pub timestamp: SystemTime,
     end_init: bool,
     known_peers: Vec<String>,
 }
@@ -37,7 +39,7 @@ impl Peers {
             (if empty string, name will be generated from random 32-bit number)
         @param public_key: public key belonging to the owning StreamletInstance
     */
-    pub fn new(mut my_name: String, node_id: u32, public_key: PublicKey) -> Self {
+    pub fn new(mut my_name: String, public_key: PublicKey) -> Self {
         if my_name == "" {
             let rand: u32 = rand::thread_rng().gen();
             my_name = format!("{}", rand).to_string();
@@ -45,11 +47,17 @@ impl Peers {
         info!("Initializing peer with name {}", my_name);
         Self {
             node_name: my_name,
-            node_id: node_id,
+            node_id: 0,
             public_key: public_key,
             peer_list: HashMap::new(),
             num_expected: 0,
         }
+    }
+
+    /* Set the peer id with the result of the peer init process.
+    @param new_node_id: node id chosen based off of peer init process */
+    pub fn set_node_id(&mut self, new_node_id: u32) {
+        self.node_id = new_node_id;
     }
 
     /* Start (or restart) an initialization process from scratch.
@@ -117,7 +125,8 @@ impl Peers {
         let my_ad = PeerAdvertisement {
             end_init: true,
             node_name: String::new(),
-            node_id: rand::thread_rng().gen(),  // TODO should fix... (unlikely) possibliity of collision
+            node_id: self.node_id,
+            timestamp: SystemTime::now(),
             public_key: self.public_key,
             known_peers: Vec::new(),
         };
@@ -127,6 +136,7 @@ impl Peers {
             kind: MessageKind::Init,
             nonce: rand,
             sender_id: self.node_id,
+            sender_name: self.node_name.clone(),
             signatures: None,
         };
 
@@ -165,7 +175,8 @@ impl Peers {
         let my_ad = PeerAdvertisement {
             end_init: false,
             node_name: self.node_name.clone(),
-            node_id: rand::thread_rng().gen(),  // TODO should fix... (unlikely) possibliity of collision
+            node_id: self.node_id,
+            timestamp: SystemTime::now(),
             public_key: self.public_key,
             known_peers: Vec::from_iter(self.peer_list.keys().cloned()),
         };
@@ -176,6 +187,7 @@ impl Peers {
             kind: MessageKind::Init,
             nonce: rand,
             sender_id: self.node_id,
+            sender_name: self.node_name.clone(),
             signatures: None,
         };
 

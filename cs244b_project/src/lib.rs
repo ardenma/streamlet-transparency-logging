@@ -3,10 +3,11 @@ mod messages;
 mod network;
 mod utils;
 
+use rand::Rng;
 use std::collections::{hash_map::DefaultHasher, HashMap, VecDeque};
+use itertools::Itertools;
 use std::hash::Hasher;
 
-use rand::Rng;
 use std::time::Duration;
 use tokio::{
     io::{stdin, AsyncBufReadExt, BufReader},
@@ -14,7 +15,7 @@ use tokio::{
     sync::{mpsc, watch},
     time::sleep,
 };
-use log::{info, warn};
+use log::{info, warn, debug};
 
 pub use blockchain::{Block, Chain, LocalChain, BlockchainManager};
 pub use messages::{Message, MessageKind, MessagePayload};
@@ -25,14 +26,14 @@ pub use utils::crypto::*;
 pub struct StreamletInstance {
     pub id: u32,
     pub name: String,
-    pub is_leader: bool,
     expected_peer_count: usize,
     current_epoch: u64,
     voted_this_epoch: bool,
     blockchain_manager: BlockchainManager,
     pending_transactions: VecDeque<String>,
     keypair: Keypair,
-    public_keys: HashMap<u32, PublicKey>,
+    public_keys: HashMap<String, PublicKey>,
+    sorted_peer_names: Vec<String>,
 }
 enum EventType {
     UserInput(String),
@@ -56,20 +57,20 @@ impl StreamletInstance {
         let mut csprng = OsRng {};
         let keypair: Keypair = Keypair::generate(&mut csprng);
         let pk: PublicKey = keypair.public.clone();
-        let id = rand::thread_rng().gen();  // TODO: set this up in peer init? currently chance for collision
+        // let id = rand::thread_rng().gen();  // TODO: set this up in peer init? currently chance for collision
 
         // Build the streamlet instance
         Self {
-            id: id,
+            id: 0,
             expected_peer_count: expected_peer_count,
-            is_leader: false,
             current_epoch: 0,
             voted_this_epoch: false,
-            name: name,
+            name: name.clone(),
             blockchain_manager: BlockchainManager::new(),
             pending_transactions: VecDeque::new(),
             keypair: keypair,
-            public_keys: HashMap::from([(id, pk)]),
+            public_keys: HashMap::from([(name.clone(), pk)]),
+            sorted_peer_names: Vec::new(),
         }
     }
 
@@ -90,7 +91,7 @@ impl StreamletInstance {
         let mut stdin = BufReader::new(stdin()).lines();
 
         // Set up what we need to initialize the peer discovery protocol
-        let mut peers = peer_init::Peers::new(self.name.clone(), self.id, self.keypair.public);
+        let mut peers = peer_init::Peers::new(self.name.clone(),  self.keypair.public);
         let (trigger_init, mut recv_init) = mpsc::channel(1);
         let mut needs_init = true;
         spawn(async move {
@@ -176,8 +177,42 @@ impl StreamletInstance {
                         }
                     }
                     EventType::EpochStart => {
-                        info!("Epoch: {} starting...", self.current_epoch);
-                        // TODO check if leader, if so propose a block from pending_transactions
+                        let leader = self.get_epoch_leader();
+                        debug!("Epoch: {} starting with leader {}...", self.current_epoch, leader);
+                 
+                        // If I am the current leader, propose a block
+                        if leader == &self.name {
+                            if let Some(data) = self.pending_transactions.pop_front() {
+                                // Send message
+                                let height = u64::try_from(self.blockchain_manager.longest_notarized_chain_length).unwrap() - 1;
+                                let parent_hash = self.blockchain_manager.head().hash.clone();
+                                let proposed_block = Block::new(
+                                    self.current_epoch, 
+                                    parent_hash,
+                                    data,
+                                    height, 
+                                    rand::thread_rng().gen());
+                                
+                                // Construct message
+                                let mut message = Message {
+                                    payload: MessagePayload::Block(proposed_block),
+                                    kind: MessageKind::Propose,
+                                    nonce: rand::thread_rng().gen(),
+                                    signatures: Some(Vec::new()),
+                                    sender_id: self.id,
+                                    sender_name: self.name.clone(),
+                                };
+
+                                // Sign and send mesasage
+                                if self.sign_message(&mut message) {
+                                    info!("Epoch: {}, (Propose) SENDING proposal, broadcasting message {}...", self.current_epoch, message.nonce);
+                                    net_stack.broadcast_message(message.serialize());
+                                } else {
+                                    panic!("something weird happened...")
+                                }
+                            }
+                        }
+
                         self.current_epoch += 1;
                     }
                     EventType::NetworkInput(bytes) => {
@@ -191,9 +226,12 @@ impl StreamletInstance {
                         match &message.payload {
                             // Peer advertisement logic
                             MessagePayload::PeerAdvertisement(ad) => {
-                                self.add_public_key(ad.node_id, &ad.public_key);
+                                self.add_public_key(ad.node_name.clone(), &ad.public_key);
                                 let status = peers.recv_advertisement(&ad, &mut net_stack);
                                 
+                                // Initialize vector of peers (for leader election)
+                                self.sorted_peer_names = self.public_keys.keys().cloned().sorted().collect();
+
                                 // If we complete the peer discovery protocol, start timer
                                 // so that they start at roughly the same time on all nodes...
                                 // TODO do a better job of syncing timers...
@@ -209,7 +247,6 @@ impl StreamletInstance {
                             MessagePayload::Block(block) => {
                                 match &message.kind {
                                     MessageKind::Vote => {
-                                      info!("Received vote message...");
 
                                         // Currently signing + echoing everything...
                                         // Should probably only sign things we already voted on??
@@ -218,13 +255,13 @@ impl StreamletInstance {
 
                                         // Only broadcast if we haven't seen it already?
                                         if self.sign_message(&mut new_message) {
-                                            info!("(Vote) signed message, broadcasting...");
+                                            info!("Epoch: {}, (Vote) received VOTE, signing and broadcasting message {}...", self.current_epoch, new_message.nonce);
                                             net_stack.broadcast_message(new_message.serialize());
                                         }
 
                                         // Add the received (+ signed by us) message to the chain if its notarized
                                         if self.is_notarized(&new_message) {
-                                            info!("(Vote) message is notarized, adding to chain...");
+                                            info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, adding to chain...", self.current_epoch, message.nonce);
                                             self.blockchain_manager.add_to_chain(block.clone());
                                         }
                                     },
@@ -232,11 +269,20 @@ impl StreamletInstance {
                                         // If we haven't voted  yet this epoch and
                                         // we receive a message from the leader, sign and vote
                                         if !self.voted_this_epoch && self.check_from_leader(&message) {
-                                            info!("Received proposal message from epoch {} leader, signing and broadcasting...",self.current_epoch);
+                                            info!("Epoch: {}, (Propose) received PROPOSE, signing and broadcasting message {}...",self.current_epoch, message.nonce);
                                             self.sign_message(&mut new_message);
                                             net_stack.broadcast_message(new_message.serialize());
                                             self.voted_this_epoch = true;
+                                            
+                                            // Add the received (+ signed by us) message to the chain if its notarized
+                                            if self.is_notarized(&new_message) {
+                                                info!("Epoch: {}, (Propose) received PROPOSE, message {} is NOTARIZED, adding to chain...", self.current_epoch, message.nonce);
+                                                self.blockchain_manager.add_to_chain(block.clone());
+                                            }
+
                                         }
+
+
                                     },
                                     _ => { /* Ignore message */}
                                 }
@@ -326,13 +372,14 @@ impl StreamletInstance {
                 }
             }
         }
+        debug!("Attempted validation on message {}, found {} valid signatures", message.nonce, num_valid_signatures);
         return num_valid_signatures;
     }
 
     /* Determines if the block associated with a message is notarized.
         @param epoch: epoch number */
     pub fn is_notarized(&self, message: &Message) -> bool {
-        return self.verify_message(message) >= self.expected_peer_count / 2;
+        return self.verify_message(message) >= ((self.expected_peer_count + 1) as f64 / 2.0).ceil() as usize;
     }
 
     /* Determines if the block associated with a message is notarized.
@@ -342,11 +389,11 @@ impl StreamletInstance {
         let leader = self.get_epoch_leader();
 
         // Make sure we have leader's public key
-        if !self.public_keys.contains_key(&leader) {
+        if !self.public_keys.contains_key(leader) {
             warn!("Missing leader public key...");
             return false;
         } 
-        let leader_pk = self.public_keys[&leader];
+        let leader_pk = self.public_keys[leader];
 
         // Check leader's signature
         match &message.signatures {
@@ -364,19 +411,19 @@ impl StreamletInstance {
 
     }    
 
-    /* Determines epoch leader using deterministic hash function.
-        @param epoch: epoch number */
-    fn get_epoch_leader(&self) -> u32 {
+    /* Determines epoch leader using deterministic hash function. */
+    fn get_epoch_leader(&self) -> &String {
         let mut hasher = DefaultHasher::new();
         hasher.write_u64(self.current_epoch);
-        let result = hasher.finish() as u32;
-        return result % (self.expected_peer_count as u32); // Assumes 0 indexing!
+        let result = hasher.finish() as usize;
+        let leader_index = result % (self.expected_peer_count + 1);  // +1 for self
+        return &self.sorted_peer_names[leader_index];
     }
     /* Determines epoch leader using deterministic hash function.
         @param epoch: epoch number
         Note: for testing, should be taken care of in peer discovery. */
-    pub fn add_public_key(&mut self, instance_id: u32, pk: &PublicKey) {
-        self.public_keys.insert(instance_id, pk.clone());  // TODO catch errors with insertion?
+    pub fn add_public_key(&mut self, instance_name: String, pk: &PublicKey) {
+        self.public_keys.insert(instance_name, pk.clone());  // TODO catch errors with insertion?
     }
 }
 
@@ -422,6 +469,7 @@ mod tests {
             kind: MessageKind::Vote,
             nonce: 0,
             sender_id: 0,
+            sender_name: String::from("test"),
             signatures: Some(Vec::new()),
         };
 
@@ -434,10 +482,10 @@ mod tests {
         assert!(message.signatures.as_ref().unwrap().len() == 3);
 
         // Adding public keys to streamlet1
-        streamlet1.add_public_key(2, &streamlet2.get_public_key());
+        streamlet1.add_public_key(String::from("test2"), &streamlet2.get_public_key());
         let bad_result = streamlet1.verify_message(&message);
         assert!(bad_result == 2);
-        streamlet1.add_public_key(3, &streamlet3.get_public_key());
+        streamlet1.add_public_key(String::from("test3"), &streamlet3.get_public_key());
         assert!(streamlet1.public_keys.len() == 3);
 
         // Verify message with all signatures
