@@ -8,8 +8,17 @@ const DEFAULT_NUM_HOSTS: usize = 2;
 async fn main() {
     pretty_env_logger::init();
 
-    /* Parse optional CL args: <expected peers> <name of this host> */
+    /* Parse optional CL args: */
     let args: Vec<String> = std::env::args().collect();
+    
+    /* - For application (net directory service): app */
+    if args.len() == 2 && args[1].starts_with("app") {
+        cs244b_project::run_app().await;
+        // Run the app and return. 
+        return;
+    }
+
+    /* - For streamlet: <expected peers> <name of this host> */
     let expected_peer_count = {
         if args.len() >= 2 {
             let num_hosts = args[1]

@@ -3,6 +3,7 @@ mod messages;
 mod network;
 mod player;
 mod utils;
+mod app;
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
@@ -293,4 +294,11 @@ mod tests {
         let good_result = streamlet1.verify_message(&message);
         assert!(good_result == true);
     }
+}
+
+
+// ***** APPLICATION *****
+pub async fn run_app() {
+    let app = app::Application::new();
+    app.run().await;
 }

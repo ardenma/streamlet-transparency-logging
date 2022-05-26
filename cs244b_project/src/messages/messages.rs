@@ -55,6 +55,7 @@ pub enum MessageKind {
     Propose,
     Test,
     Init,
+    // Add option(s) for application here
 }
 
 #[cfg(test)]
