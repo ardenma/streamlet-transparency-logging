@@ -162,21 +162,10 @@ impl StreamletInstance {
                         } else {
                             info!("User input... adding '{}' to pending transactions", line);
                             self.pending_transactions.push_back(line);
-
-                            // let rand: u32 = rand::thread_rng().gen();
-                            // let message = Message {
-                            //     payload: MessagePayload::String(line),
-                            //     kind: MessageKind::Test,
-                            //     nonce: rand,
-                            //     signatures: None,
-                            // };
-
-                            // info!("Sending message {:?}", message);
-
-                            // net_stack.broadcast_message(message.serialize());
                         }
                     }
                     EventType::EpochStart => {
+                        self.voted_this_epoch = false;
                         let leader = self.get_epoch_leader();
                         // debug!("Epoch: {} starting with leader {}...", self.current_epoch, leader);
                  
@@ -247,7 +236,6 @@ impl StreamletInstance {
                             MessagePayload::Block(block) => {
                                 match &message.kind {
                                     MessageKind::Vote => {
-
                                         // Currently signing + echoing everything...
                                         // Should probably only sign things we already voted on??
                                         // Note sure... TODO
@@ -268,6 +256,7 @@ impl StreamletInstance {
                                     MessageKind::Propose => {
                                         // If we haven't voted  yet this epoch and
                                         // we receive a message from the leader, sign and vote
+
                                         if !self.voted_this_epoch && self.check_from_leader(&message) {
                                             info!("Epoch: {}, (Propose) received PROPOSE, signing and broadcasting message {}...",self.current_epoch, message.nonce);
                                             self.sign_message(&mut new_message);
