@@ -259,6 +259,7 @@ impl StreamletInstance {
 
                                         if !self.voted_this_epoch && self.check_from_leader(&message) {
                                             info!("Epoch: {}, (Propose) received PROPOSE, signing and broadcasting message {}...",self.current_epoch, message.nonce);
+                                            new_message.kind = MessageKind::Vote;
                                             self.sign_message(&mut new_message);
                                             net_stack.broadcast_message(new_message.serialize());
                                             self.voted_this_epoch = true;
