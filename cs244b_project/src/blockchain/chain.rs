@@ -6,21 +6,21 @@ use sha2::{Digest, Sha256};
 // from the type of chain that is ultimately pushed to a public blockchain and any other representations we may want.
 pub trait Chain {
     fn new() -> Self;
-    fn genesis(&mut self) -> Block;
     fn append_block(&mut self, block: Block);
     fn fetch_block(&self, id: u64) -> Block;
     fn validate_block(block: &Block, parent_block: &Block) -> bool;
     fn finalize_block();
+    fn head(&self) -> &Block;
+    fn length(&self) -> usize;
+    fn copy_up_to_height(&self, height: u64) -> Self;
 }
 #[derive(Debug, Clone)]
 pub struct LocalChain {
     pub blocks: Vec<Block>,
 }
 
-impl Chain for LocalChain {
-    fn new() -> Self {
-        Self { blocks: vec![] }
-    }
+// Private helper functions
+impl LocalChain {
     fn genesis(&mut self) -> Block {
         let mut hasher = Sha256::new();
         hasher.update("genesis");
@@ -30,16 +30,19 @@ impl Chain for LocalChain {
             .try_into()
             .expect("slice with incorrect length");
 
-        let genesis_block = Block {
-            epoch: 0,
-            hash: bytes,
-            parent_hash: bytes,
-            data: String::from("genesis payload"),
-            votes: vec![],
-            nonce: 0,
-        };
+        let genesis_block = Block::new(0, bytes, String::from("genesis payload"), 0, 0);
         self.blocks.push(genesis_block.clone());
         return genesis_block;
+    }
+}
+
+impl Chain for LocalChain {
+    fn new() -> Self {
+        let mut chain = Self { 
+            blocks: vec![]
+        };
+        chain.genesis();
+        return chain;
     }
     fn append_block(&mut self, block: Block) {
         self.blocks.push(block);
@@ -55,4 +58,15 @@ impl Chain for LocalChain {
         };
     }
     fn finalize_block() {}
+    fn head(&self) -> &Block {
+        return &self.blocks.last().expect("Blockchain is empty...");
+    }
+    fn length(&self) -> usize {
+        return self.blocks.len();
+    }
+    fn copy_up_to_height(&self, height: u64) -> LocalChain{
+        // +1 because slice end is exclusive
+        let copy_idx = usize::try_from(height + 1).expect("could not cast u64 to usize");
+         Self { blocks: self.blocks[..copy_idx].to_vec() }
+    }
 }

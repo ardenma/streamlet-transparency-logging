@@ -2,7 +2,8 @@ use ed25519_dalek::PublicKey;
 use log::info;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, alloc::System};
+use std::time::SystemTime;
 
 use super::NetworkStack;
 use crate::messages::{Message, MessageKind, MessagePayload};
@@ -10,6 +11,7 @@ use crate::messages::{Message, MessageKind, MessagePayload};
 #[derive(Debug)]
 pub struct Peers {
     pub node_name: String,
+    pub node_id: u32,
     pub public_key: PublicKey,
     pub peer_list: HashMap<String, PublicKey>,
     num_expected: usize,
@@ -17,10 +19,18 @@ pub struct Peers {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct PeerAdvertisement {
+    pub public_key: PublicKey,
+    pub node_id: u32,
+    pub node_name: String,
+    pub timestamp: SystemTime,
     end_init: bool,
-    node_name: String,
-    public_key: PublicKey,
     known_peers: Vec<String>,
+}
+
+pub enum InitStatus {
+    InProgress,
+    Done,
+    DoneStartTimer,
 }
 
 impl Peers {
@@ -37,10 +47,17 @@ impl Peers {
         info!("Initializing peer with name {}", my_name);
         Self {
             node_name: my_name,
+            node_id: 0,
             public_key: public_key,
             peer_list: HashMap::new(),
             num_expected: 0,
         }
+    }
+
+    /* Set the peer id with the result of the peer init process.
+    @param new_node_id: node id chosen based off of peer init process */
+    pub fn set_node_id(&mut self, new_node_id: u32) {
+        self.node_id = new_node_id;
     }
 
     /* Start (or restart) an initialization process from scratch.
@@ -68,20 +85,20 @@ impl Peers {
     Closes the initialization channel if all peers have been received.
     @param ad: PeerAdvertisement received from the network
     @param net_stack: network stack containing an initialization channel to send on. */
-    pub fn recv_advertisement(&mut self, ad: PeerAdvertisement, net_stack: &mut NetworkStack) {
+    pub fn recv_advertisement(&mut self, ad: &PeerAdvertisement, net_stack: &mut NetworkStack) -> InitStatus {
         if ad.end_init && self.is_done() {
             self.end_init(net_stack);
-            return;
+            return InitStatus::Done;
         }
         if self.is_done() || self.peer_list.contains_key(&ad.node_name) {
             info!(
                 "{} received a duplicate or out-of-scope peer advertisement",
                 self.node_name
             );
-            return;
+            return InitStatus::Done;
         }
         info!("{} adding peer: {}", self.node_name, ad.node_name);
-        self.peer_list.insert(ad.node_name, ad.public_key);
+        self.peer_list.insert(ad.node_name.clone(), ad.public_key);
 
         if !ad.known_peers.contains(&self.node_name) {
             self.advertise_self(net_stack);
@@ -93,7 +110,10 @@ impl Peers {
                 self.node_name,
                 self.peer_list.len()
             );
+            return InitStatus::DoneStartTimer;
         }
+
+        return InitStatus::InProgress;
     }
 
     /* If all expected advertisements have been received. */
@@ -105,6 +125,8 @@ impl Peers {
         let my_ad = PeerAdvertisement {
             end_init: true,
             node_name: String::new(),
+            node_id: self.node_id,
+            timestamp: SystemTime::now(),
             public_key: self.public_key,
             known_peers: Vec::new(),
         };
@@ -113,6 +135,8 @@ impl Peers {
             payload: MessagePayload::PeerAdvertisement(my_ad),
             kind: MessageKind::Init,
             nonce: rand,
+            sender_id: self.node_id,
+            sender_name: self.node_name.clone(),
             signatures: None,
         };
 
@@ -151,6 +175,8 @@ impl Peers {
         let my_ad = PeerAdvertisement {
             end_init: false,
             node_name: self.node_name.clone(),
+            node_id: self.node_id,
+            timestamp: SystemTime::now(),
             public_key: self.public_key,
             known_peers: Vec::from_iter(self.peer_list.keys().cloned()),
         };
@@ -160,6 +186,8 @@ impl Peers {
             payload: MessagePayload::PeerAdvertisement(my_ad),
             kind: MessageKind::Init,
             nonce: rand,
+            sender_id: self.node_id,
+            sender_name: self.node_name.clone(),
             signatures: None,
         };
 
