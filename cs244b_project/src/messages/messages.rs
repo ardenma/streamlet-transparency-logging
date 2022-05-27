@@ -38,6 +38,7 @@ pub enum MessagePayload {
     String(String),
     PeerAdvertisement(PeerAdvertisement),
     AppData(Vec<u8>),
+    None,
 }
 
 // Useful for serializing the payload (block) so we can sign it
@@ -57,10 +58,12 @@ pub enum MessageKind {
     Vote,
     Propose,
     Test,
-    Init,
+    PeerInit,
     // Application-Streamlet config
     AppRequest,
     AppSend,
+    AppBlockRequest,
+    AppBlockResponse,
 }
 
 #[cfg(test)]

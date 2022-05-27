@@ -2,8 +2,8 @@ use ed25519_dalek::PublicKey;
 use log::info;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, alloc::System};
 use std::time::SystemTime;
+use std::{alloc::System, collections::HashMap};
 
 use super::NetworkStack;
 use crate::messages::{Message, MessageKind, MessagePayload};
@@ -85,7 +85,11 @@ impl Peers {
     Closes the initialization channel if all peers have been received.
     @param ad: PeerAdvertisement received from the network
     @param net_stack: network stack containing an initialization channel to send on. */
-    pub fn recv_advertisement(&mut self, ad: &PeerAdvertisement, net_stack: &mut NetworkStack) -> InitStatus {
+    pub fn recv_advertisement(
+        &mut self,
+        ad: &PeerAdvertisement,
+        net_stack: &mut NetworkStack,
+    ) -> InitStatus {
         if ad.end_init && self.is_done() {
             self.end_init(net_stack);
             return InitStatus::Done;
@@ -133,7 +137,7 @@ impl Peers {
         let rand: u32 = rand::thread_rng().gen();
         let message = Message {
             payload: MessagePayload::PeerAdvertisement(my_ad),
-            kind: MessageKind::Init,
+            kind: MessageKind::PeerInit,
             nonce: rand,
             sender_id: self.node_id,
             sender_name: self.node_name.clone(),
@@ -184,7 +188,7 @@ impl Peers {
         let rand: u32 = rand::thread_rng().gen();
         let message = Message {
             payload: MessagePayload::PeerAdvertisement(my_ad),
-            kind: MessageKind::Init,
+            kind: MessageKind::PeerInit,
             nonce: rand,
             sender_id: self.node_id,
             sender_name: self.node_name.clone(),

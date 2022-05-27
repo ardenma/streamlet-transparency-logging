@@ -4,17 +4,29 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SignedBlock {
+    pub block: Block,
+    pub signatures: Vec<Signature>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Block {
-    pub epoch: u64,        // epoch the block was proposed in
-    pub hash: Sha256Hash,  // hash of the block
-    pub parent_hash: Sha256Hash,  // hash of the parent block
-    pub data: Vec<u8>,      // some stringified version of a vec<Transaction>
-    pub height: u64,       // metadata to make constructing chains easier
-    pub nonce: u64,        // not sure what this is for? maybe helpful lol
+    pub epoch: u64,              // epoch the block was proposed in
+    pub hash: Sha256Hash,        // hash of the block
+    pub parent_hash: Sha256Hash, // hash of the parent block
+    pub data: Vec<u8>,           // some stringified version of a vec<Transaction>
+    pub height: u64,             // metadata to make constructing chains easier
+    pub nonce: u64,              // not sure what this is for? maybe helpful lol
 }
 
 impl Block {
-    pub fn new(epoch: u64, parent_hash: Sha256Hash, data: Vec<u8>, height: u64, nonce: u64) -> Self {
+    pub fn new(
+        epoch: u64,
+        parent_hash: Sha256Hash,
+        data: Vec<u8>,
+        height: u64,
+        nonce: u64,
+    ) -> Self {
         // create a Sha256 object
         let mut hasher = Sha256::new();
 

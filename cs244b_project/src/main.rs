@@ -10,11 +10,11 @@ async fn main() {
 
     /* Parse optional CL args: */
     let args: Vec<String> = std::env::args().collect();
-    
+
     /* - For application (net directory service): app */
     if args.len() == 2 && args[1].starts_with("app") {
         cs244b_project::run_app().await;
-        // Run the app and return. 
+        // Run the app and return.
         return;
     }
 
