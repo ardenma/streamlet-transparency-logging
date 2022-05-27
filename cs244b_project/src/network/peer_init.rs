@@ -2,8 +2,8 @@ use ed25519_dalek::PublicKey;
 use log::info;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, alloc::System};
 use std::time::SystemTime;
+use std::{alloc::System, collections::HashMap};
 
 use super::NetworkStack;
 use crate::messages::{Message, MessageKind, MessagePayload};
@@ -85,7 +85,11 @@ impl Peers {
     Closes the initialization channel if all peers have been received.
     @param ad: PeerAdvertisement received from the network
     @param net_stack: network stack containing an initialization channel to send on. */
-    pub fn recv_advertisement(&mut self, ad: &PeerAdvertisement, net_stack: &mut NetworkStack) -> InitStatus {
+    pub fn recv_advertisement(
+        &mut self,
+        ad: &PeerAdvertisement,
+        net_stack: &mut NetworkStack,
+    ) -> InitStatus {
         if ad.end_init && self.is_done() {
             self.end_init(net_stack);
             return InitStatus::Done;
@@ -130,12 +134,15 @@ impl Peers {
             public_key: self.public_key,
             known_peers: Vec::new(),
         };
-        let message = Message::new(
-            MessagePayload::PeerAdvertisement(my_ad),
-            MessageKind::Init,
-            self.node_id,
-            self.node_name.clone(),
-        );
+        let rand: u32 = rand::thread_rng().gen();
+        let message = Message {
+            payload: MessagePayload::PeerAdvertisement(my_ad),
+            kind: MessageKind::PeerInit,
+            nonce: rand,
+            sender_id: self.node_id,
+            sender_name: self.node_name.clone(),
+            signatures: None,
+        };
 
         net_stack.send_init_channel(message.serialize());
         self.end_init(net_stack);
@@ -178,12 +185,15 @@ impl Peers {
             known_peers: Vec::from_iter(self.peer_list.keys().cloned()),
         };
 
-        let message = Message::new(
-            MessagePayload::PeerAdvertisement(my_ad),
-            MessageKind::Init,
-            self.node_id,
-            self.node_name.clone(),
-        );
+        let rand: u32 = rand::thread_rng().gen();
+        let message = Message {
+            payload: MessagePayload::PeerAdvertisement(my_ad),
+            kind: MessageKind::PeerInit,
+            nonce: rand,
+            sender_id: self.node_id,
+            sender_name: self.node_name.clone(),
+            signatures: None,
+        };
 
         net_stack.send_init_channel(message.serialize());
     }
