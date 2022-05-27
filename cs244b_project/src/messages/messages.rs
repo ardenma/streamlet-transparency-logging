@@ -1,4 +1,5 @@
 use bincode::{deserialize, serialize};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::vec::Vec;
 
@@ -13,10 +14,20 @@ pub struct Message {
     pub nonce: u32,
     pub sender_id: u32,
     pub sender_name: String,
-    pub signatures: Option<Vec<Signature>>,
+    signatures: Vec<Signature>,
 }
 
 impl Message {
+    pub fn new(payload: MessagePayload, kind: MessageKind, sender_id: u32, sender_name: String) -> Message {
+        Message { 
+            payload, 
+            kind, 
+            nonce: rand::thread_rng().gen(), 
+            sender_id,
+            sender_name, 
+            signatures: Vec::new() 
+        }
+    }
     // Used to sign the message payload (block)
     pub fn serialize_payload(&self) -> Vec<u8> {
         return self.payload.serialize();
@@ -29,6 +40,12 @@ impl Message {
         let decoded: Message = deserialize(&encoded[..]).expect("Failed deserialization.");
         return decoded;
     }
+    // Access functions for message signatures to avoid storing entire Siganture vector copies
+    pub fn get_signatures(self) -> Vec<Signature> { self.signatures } 
+    pub fn sign_message(&mut self, signature: Signature) {
+        self.signatures.push(signature)
+    }
+    pub fn signature_count(&self) -> usize { self.signatures.len() }
 }
 
 // Wrapper for different kinds of messages (currently only blocks are supported)
@@ -78,14 +95,12 @@ mod tests {
         let blk = Block::new(0, bytes, String::from("test"), 0, 0);
 
         // Create a message
-        let message = Message {
-            payload: MessagePayload::Block(blk),
-            kind: MessageKind::Vote,
-            nonce: 0,
-            signatures: Some(Vec::new()),
-            sender_id: 0,
-            sender_name: String::from("test"),
-        };
+        let message = Message::new(
+            MessagePayload::Block(blk),
+            MessageKind::Vote,
+            0,
+            String::from("test"),
+        );
 
         // Serdes
         let serialized_message = message.serialize();

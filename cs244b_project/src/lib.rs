@@ -168,7 +168,7 @@ impl StreamletInstance {
                         self.voted_this_epoch = false;
                         let leader = self.get_epoch_leader();
                         // debug!("Epoch: {} starting with leader {}...", self.current_epoch, leader);
-                 
+
                         // If I am the current leader, propose a block
                         if leader == &self.name {
                             if let Some(data) = self.pending_transactions.pop_front() {
@@ -176,22 +176,20 @@ impl StreamletInstance {
                                 let height = u64::try_from(self.blockchain_manager.longest_notarized_chain_length).unwrap() - 1;
                                 let parent_hash = self.blockchain_manager.head().hash.clone();
                                 let proposed_block = Block::new(
-                                    self.current_epoch, 
+                                    self.current_epoch,
                                     parent_hash,
                                     data,
-                                    height, 
+                                    height,
                                     rand::thread_rng().gen());
-                                
-                                // Construct message
-                                let mut message = Message {
-                                    payload: MessagePayload::Block(proposed_block),
-                                    kind: MessageKind::Propose,
-                                    nonce: rand::thread_rng().gen(),
-                                    signatures: Some(Vec::new()),
-                                    sender_id: self.id,
-                                    sender_name: self.name.clone(),
-                                };
 
+                                // Construct message
+                                let mut message = Message::new(
+                                    MessagePayload::Block(proposed_block),
+                                    MessageKind::Propose,
+                                    self.id,
+                                    self.name.clone()
+                                );
+                                    
                                 // Sign and send mesasage
                                 if self.sign_message(&mut message) {
                                     info!("Epoch: {}, (Propose) SENDING proposal, broadcasting message {}...", self.current_epoch, message.nonce);
@@ -217,7 +215,7 @@ impl StreamletInstance {
                             MessagePayload::PeerAdvertisement(ad) => {
                                 self.add_public_key(ad.node_name.clone(), &ad.public_key);
                                 let status = peers.recv_advertisement(&ad, &mut net_stack);
-                                
+
                                 // Initialize vector of peers (for leader election)
                                 self.sorted_peer_names = self.public_keys.keys().cloned().sorted().collect();
 
@@ -263,7 +261,7 @@ impl StreamletInstance {
                                             self.sign_message(&mut new_message);
                                             net_stack.broadcast_message(new_message.serialize());
                                             self.voted_this_epoch = true;
-                                            
+
                                             // Add the received (+ signed by us) message to the chain if its notarized
                                             if self.is_notarized(&new_message) {
                                                 info!("Epoch: {}, (Propose) received PROPOSE, message {} is NOTARIZED, adding to chain...", self.current_epoch, message.nonce);
@@ -274,7 +272,7 @@ impl StreamletInstance {
 
 
                                     },
-                                    _ => { 
+                                    _ => {
                                         debug!("Unknown message format - ignoring");
                                     }
                                 }
@@ -314,25 +312,15 @@ impl StreamletInstance {
        by us
         @param message: the message instance with a payload to be signed */
     fn sign_message(&self, message: &mut Message) -> bool {
-        match &mut message.signatures {
-            Some(_) => {
-                // Create signature
-                let signature: Signature =
-                    self.keypair.sign(message.serialize_payload().as_slice());
-                let signatures: &mut Vec<Signature> = message.signatures.as_mut().unwrap();
-
-                // Make sure we haven't signed already
-                for s in signatures.iter() {
-                    if signature == *s {
-                        return false;
-                    }
-                }
-
-                signatures.push(signature);
-                return true;
-            }
-            None => panic!("Tried to add signature to message without signature vector!"),
+        // Create signature
+        let signature: Signature = self.keypair.sign(message.serialize_payload().as_slice());
+        // Make sure we haven't signed already
+        for s in message.clone().get_signatures() {
+            if signature == s { return false; }
         }
+
+        message.sign_message(signature.clone());
+        return true;
     }
 
     /* Verifies a (message, signature) pair against a public key.
@@ -352,8 +340,8 @@ impl StreamletInstance {
         @param message: the message instance with signatures to be validated */
     fn verify_message(&self, message: &Message) -> usize {
         let mut num_valid_signatures = 0;
-        let signatures = message.signatures.as_ref().unwrap(); // Check all signatures
-        
+        let signatures: Vec<Signature> = message.clone().get_signatures(); // Check all signatures
+
         // Check all sigatures on the message (TODO check duplicates)
         for signature in signatures.iter() {
             // Check against all known pk's
@@ -384,24 +372,17 @@ impl StreamletInstance {
         if !self.public_keys.contains_key(leader) {
             warn!("Missing leader public key...");
             return false;
-        } 
+        }
         let leader_pk = self.public_keys[leader];
 
         // Check leader's signature
-        match &message.signatures {
-            Some(signatures) => {
-                if signatures.len() == 1 {
-                    return self.verify_signature(message, &signatures[0], &leader_pk);
-                } else {
-                    return false;
-                }
-            },
-            None => {
-                return false;
-            }
+        let signatures = message.clone().get_signatures();
+        if signatures.len() == 1 {
+            return self.verify_signature(message, &signatures[0], &leader_pk);
+        } else {
+            return false;
         }
-
-    }    
+    }
 
     /* Determines epoch leader using deterministic hash function. */
     fn get_epoch_leader(&self) -> &String {
@@ -456,22 +437,20 @@ mod tests {
         let blk = Block::new(0, bytes, String::from("test"), 0, 0);
 
         // Create a message
-        let mut message = Message {
-            payload: MessagePayload::Block(blk),
-            kind: MessageKind::Vote,
-            nonce: 0,
-            sender_id: 0,
-            sender_name: String::from("test"),
-            signatures: Some(Vec::new()),
-        };
+        let mut message = Message::new(
+            MessagePayload::Block(blk),
+            MessageKind::Vote,
+            0,
+            String::from("test"),
+        );
 
         // Signing message
         streamlet1.sign_message(&mut message);
-        assert!(message.signatures.as_ref().unwrap().len() == 1);
+        assert!(message.signature_count() == 1);
         streamlet2.sign_message(&mut message);
-        assert!(message.signatures.as_ref().unwrap().len() == 2);
+        assert!(message.signature_count() == 2);
         streamlet3.sign_message(&mut message);
-        assert!(message.signatures.as_ref().unwrap().len() == 3);
+        assert!(message.signature_count() == 3);
 
         // Adding public keys to streamlet1
         streamlet1.add_public_key(String::from("test2"), &streamlet2.get_public_key());

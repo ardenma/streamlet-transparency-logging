@@ -130,15 +130,12 @@ impl Peers {
             public_key: self.public_key,
             known_peers: Vec::new(),
         };
-        let rand: u32 = rand::thread_rng().gen();
-        let message = Message {
-            payload: MessagePayload::PeerAdvertisement(my_ad),
-            kind: MessageKind::Init,
-            nonce: rand,
-            sender_id: self.node_id,
-            sender_name: self.node_name.clone(),
-            signatures: None,
-        };
+        let message = Message::new(
+            MessagePayload::PeerAdvertisement(my_ad),
+            MessageKind::Init,
+            self.node_id,
+            self.node_name.clone(),
+        );
 
         net_stack.send_init_channel(message.serialize());
         self.end_init(net_stack);
@@ -181,15 +178,12 @@ impl Peers {
             known_peers: Vec::from_iter(self.peer_list.keys().cloned()),
         };
 
-        let rand: u32 = rand::thread_rng().gen();
-        let message = Message {
-            payload: MessagePayload::PeerAdvertisement(my_ad),
-            kind: MessageKind::Init,
-            nonce: rand,
-            sender_id: self.node_id,
-            sender_name: self.node_name.clone(),
-            signatures: None,
-        };
+        let message = Message::new(
+            MessagePayload::PeerAdvertisement(my_ad),
+            MessageKind::Init,
+            self.node_id,
+            self.node_name.clone(),
+        );
 
         net_stack.send_init_channel(message.serialize());
     }
