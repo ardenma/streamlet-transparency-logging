@@ -28,6 +28,17 @@ impl Message {
             signatures: Vec::new() 
         }
     }
+    // Grr... no overloading in Rust... eventually `nonce` should be private. Security-wise it doesn't make sense this way
+    pub fn new_with_defined_nonce(payload: MessagePayload, kind: MessageKind, nonce: u32, sender_id: u32, sender_name: String) -> Message {
+        Message { 
+            payload, 
+            kind, 
+            nonce,
+            sender_id,
+            sender_name, 
+            signatures: Vec::new() 
+        }
+    }
     // Used to sign the message payload (block)
     pub fn serialize_payload(&self) -> Vec<u8> {
         return self.payload.serialize();

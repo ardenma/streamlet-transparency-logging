@@ -249,28 +249,29 @@ impl Application {
         let sig = self.keypair.sign(&data);
         self.curr_nonce += 1;
 
-        Message {
-            payload: MessagePayload::AppData(data),
-            kind: MessageKind::AppSend,
-            nonce: self.curr_nonce,
-            sender_id: APP_SENDER_ID,
-            sender_name: "app".to_string(),
-            signatures: Some(vec![sig]),
-        }
+        let mut msg = Message::new_with_defined_nonce(
+            MessagePayload::AppData(data),
+            MessageKind::AppSend,
+            self.curr_nonce,
+            APP_SENDER_ID,
+            "app".to_string(),
+        );
+        msg.sign_message(sig);
+        return msg;
     }
 
     /* Requests the lastest finalized block from streamlet */
     fn make_latest_block_request(&mut self) -> Message {
         self.curr_nonce += 1;
 
-        Message {
-            payload: MessagePayload::None,
-            kind: MessageKind::AppBlockRequest,
-            nonce: self.curr_nonce,
-            sender_id: APP_SENDER_ID,
-            sender_name: "app".to_string(),
-            signatures: None,
-        }
+        let msg = Message::new_with_defined_nonce(
+            MessagePayload::None,
+            MessageKind::AppBlockRequest,
+            self.curr_nonce,
+            APP_SENDER_ID,
+            "app".to_string(),
+        );
+        return msg;
     }
 
     // TODO, potentially optional: two-way validation

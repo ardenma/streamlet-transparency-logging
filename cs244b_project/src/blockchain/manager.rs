@@ -54,42 +54,43 @@ impl BlockchainManager {
         true
     }
 
+    pub fn index_of_ancestor_chain(&mut self, new_block: Block) -> Option<usize> {
+        let mut chain_idx = 0;
+        for chain in self.notarized_chains.iter_mut() {
+            let (block, _) = chain.head();
+            if block.hash == new_block.parent_hash { break; }
+            chain_idx += 1;
+        }
+        return Some(chain_idx);
+    }
+
     /* Tries to adds block to a notarized chain and tries to finalize the
     chain (TODO make more efficient)
      @param notarized_block: notarized_block to add */
-    pub fn add_to_chain(&mut self, notarized_block: Block, signatures: Vec<Signature>) -> bool {
-        let mut chain_idx = 0;
-        let mut success = false;
+    pub fn add_to_chain(&mut self, notarized_block: Block, signatures: Vec<Signature>, chain_index: usize) {
+        let notarized_chain_opt = self.notarized_chains.get_mut(chain_index);         
+        match notarized_chain_opt {
+            Some(notarized_chain) => {
+                // fail-fast checks to protect against public function shenanigans
+                if !(notarized_chain.head().0.hash == notarized_block.parent_hash) { panic!("Block was supposed to be a descendent of the given chain, but was not.") };
+                // if we make stuff more private we should confirm here that the block actually is notarized though this is more of a local issue so 
+                // not crazy important
 
-        // Try to add notarized block to one of the notarized chains
-        for chain in self.notarized_chains.iter_mut() {
-            let (block, _) = chain.head();
-            if block.hash == notarized_block.parent_hash {
+                notarized_chain.append_block(notarized_block.clone(), signatures);
                 info!("Added notarized block with epoch: {}, nonce: {}, parent hash: {:?}, hash: {:?}",
                       notarized_block.epoch, notarized_block.nonce, notarized_block.parent_hash, notarized_block.hash);
-                chain.append_block(notarized_block, signatures);
-                // Update longest notarized chain length if needed
-                if chain.length() > self.longest_notarized_chain_length {
+                if notarized_chain.length() > self.longest_notarized_chain_length {
+                    self.longest_notarized_chain_length = notarized_chain.length();
                     info!(
                         "New longest notarized chain length: {}",
                         self.longest_notarized_chain_length
                     );
-                    self.longest_notarized_chain_length = chain.length();
                 }
-                success = true;
-                break;
+                self.notarized_chains.sort_by(|a, b| b.blocks.len().cmp(&a.blocks.len()));
+                self.try_finalize(chain_index);
             }
-            chain_idx += 1;
+            None => {}
         }
-
-        // TODO: make more efficient, e.g. keep a record of last n (3 or 6) blocks
-        // and only try to finalize if they all are notaraized on the same chain
-        if success {
-            self.try_finalize(chain_idx);
-            return true;
-        }
-
-        return false;
     }
 
     /* Tries to finalize the notarized chain given by notarized_chain_idx.

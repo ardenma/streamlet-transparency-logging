@@ -202,14 +202,12 @@ impl StreamletInstance {
                                 );
 
                                 // Construct message
-                                let mut message = Message {
-                                    payload: MessagePayload::Block(proposed_block),
-                                    kind: MessageKind::Propose,
-                                    nonce: rand::thread_rng().gen(),
-                                    signatures: Some(Vec::new()),
-                                    sender_id: self.id,
-                                    sender_name: self.name.clone(),
-                                };
+                                let mut message = Message::new(
+                                    MessagePayload::Block(proposed_block),
+                                    MessageKind::Propose,
+                                    self.id,
+                                    self.name.clone(),
+                                );
 
                                 // Sign and send mesasage
                                 if self.sign_message(&mut message) {
@@ -248,14 +246,12 @@ impl StreamletInstance {
                                     self.get_latest_finalized_block();
 
                                 // Construct message
-                                let new_message = Message {
-                                    payload: MessagePayload::Block(latest_finalized_block),
-                                    kind: MessageKind::AppBlockResponse,
-                                    nonce: message.nonce,  // Note: matching message nonce, kind of hacky...
-                                    signatures: Some(signatures),
-                                    sender_id: self.id,
-                                    sender_name: self.name.clone(),
-                                };
+                                let new_message = Message::new(
+                                    MessagePayload::Block(latest_finalized_block),
+                                    MessageKind::AppBlockResponse,
+                                    self.id,
+                                    self.name.clone(),
+                                );
 
                                 // TOOD: just send to the application instead of bcast?
                                 info!("Epoch: {}, responding to AppBlockRequest with {:?}", self.current_epoch, &new_message);
@@ -298,19 +294,25 @@ impl StreamletInstance {
                                     // Clone of message that we can modify
                                     let mut new_message = message.clone();
 
-                                    // Only broadcast if we haven't seen it already?
-                                    if self.sign_message(&mut new_message) {
-                                        info!("Epoch: {}, (Vote) received VOTE, signing and broadcasting message {}...", self.current_epoch, new_message.nonce);
-                                        net_stack.broadcast_message(new_message.serialize());
-                                    }
                                     if self.is_notarized(&new_message) {
+                                        info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, checking for ancestor chain...", self.current_epoch, message.nonce);
+                                        let chain_index = self.blockchain_manager.index_of_ancestor_chain(block.clone());
+                                        match chain_index {
+                                            Some(idx) => {
+                                                info!("Epoch: {}, VOTE message {} descends from a notarized chain. Adding to chain...", self.current_epoch, message.nonce);
+                                                self.blockchain_manager
+                                            .       add_to_chain(block.clone(), message.clone().get_signatures(), idx);
+                                                // Only broadcast if we haven't signed already
+                                                if self.sign_message(&mut new_message) {
+                                                    info!("Epoch: {}, (Vote) received VOTE, signing and broadcasting message {}...", self.current_epoch, new_message.nonce);
+                                                    net_stack.broadcast_message(new_message.serialize());
+                                                }
+                                            }
+                                            None => {
+                                                info!("Epoch: {}, VOTE, message {} does not descend from a notarized chain. Will not sign or broadcast.", self.current_epoch, message.nonce);
+                                            }
+                                        }
                                         info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, adding to chain...", self.current_epoch, message.nonce);
-                                        let signatures = message
-                                            .signatures
-                                            .expect("Message missing signatures...")
-                                            .clone();
-                                        self.blockchain_manager
-                                            .add_to_chain(block.clone(), signatures);
                                     }
 
                                     self.pending_transactions.retain(|x| *x != block.data);
@@ -337,12 +339,10 @@ impl StreamletInstance {
                                         // Add the received (+ signed by us) message to the chain if its notarized
                                         if self.is_notarized(&new_message) {
                                             info!("Epoch: {}, (Propose) received PROPOSE, message {} is NOTARIZED, adding to chain...", self.current_epoch, message.nonce);
-                                            let signatures = message
-                                                .signatures
-                                                .expect("Message missing signatures...")
-                                                .clone();
-                                            self.blockchain_manager
-                                                .add_to_chain(block.clone(), signatures);
+                                            self.blockchain_manager.index_of_ancestor_chain(block.clone()).map(|idx| 
+                                                self.blockchain_manager
+                                                    .add_to_chain(block.clone(), message.clone().get_signatures(), idx)
+                                            );
                                         }
 
                                         self.pending_transactions.retain(|x| *x != block.data);
@@ -394,28 +394,15 @@ impl StreamletInstance {
     by us
      @param message: the message instance with a payload to be signed */
     fn sign_message(&self, message: &mut Message) -> bool {
-        match &mut message.signatures {
-            Some(_) => {
-                // Create signature
-                let signature: Signature =
-                    self.keypair.sign(message.serialize_payload().as_slice());
-                let signatures: &mut Vec<Signature> = message.signatures.as_mut().unwrap();
-
-                // Make sure we haven't signed already
-                for s in signatures.iter() {
-                    if signature == *s {
-                        return false;
-                    }
-                }
-
-                signatures.push(signature);
-                return true;
-            }
-            None => {
-                debug!("Tried to add signature to message without signature vector!");
-                false
-            }
+        // Create signature
+        let signature: Signature = self.keypair.sign(message.serialize_payload().as_slice());
+        // Make sure we haven't signed already
+        for s in message.clone().get_signatures() {
+            if signature == s { return false; }
         }
+
+        message.sign_message(signature.clone());
+        return true;
     }
 
     /* Verifies a (message, signature) pair against a public key.
@@ -435,7 +422,7 @@ impl StreamletInstance {
     @param message: the message instance with signatures to be validated */
     fn verify_message(&self, message: &Message) -> usize {
         let mut num_valid_signatures = 0;
-        let signatures = message.signatures.as_ref().unwrap(); // Check all signatures
+        let signatures = message.clone().get_signatures(); // Check all signatures
 
         // Check all sigatures on the message (TODO check duplicates)
         for signature in signatures.iter() {
@@ -475,17 +462,11 @@ impl StreamletInstance {
         let leader_pk = self.public_keys[leader];
 
         // Check leader's signature
-        match &message.signatures {
-            Some(signatures) => {
-                if signatures.len() == 1 {
-                    return self.verify_signature(message, &signatures[0], &leader_pk);
-                } else {
-                    return false;
-                }
-            }
-            None => {
-                return false;
-            }
+        let signatures = message.clone().get_signatures();
+        if signatures.len() == 1 {
+            return self.verify_signature(message, &signatures[0], &leader_pk);
+        } else {
+            return false;
         }
     }
 
@@ -542,22 +523,21 @@ mod tests {
         let blk = Block::new(0, bytes, String::from("test").into_bytes(), 0, 0);
 
         // Create a message
-        let mut message = Message {
-            payload: MessagePayload::Block(blk),
-            kind: MessageKind::Vote,
-            nonce: 0,
-            sender_id: 0,
-            sender_name: String::from("test"),
-            signatures: Some(Vec::new()),
-        };
+        let mut message = Message::new_with_defined_nonce(
+            MessagePayload::Block(blk),
+            MessageKind::Vote,
+            0,
+            0,
+            String::from("test"),
+        );
 
         // Signing message
         streamlet1.sign_message(&mut message);
-        assert!(message.signatures.as_ref().unwrap().len() == 1);
+        assert!(message.signature_count() == 1);
         streamlet2.sign_message(&mut message);
-        assert!(message.signatures.as_ref().unwrap().len() == 2);
+        assert!(message.signature_count() == 2);
         streamlet3.sign_message(&mut message);
-        assert!(message.signatures.as_ref().unwrap().len() == 3);
+        assert!(message.signature_count() == 3);
 
         // Adding public keys to streamlet1
         streamlet1.add_public_key(String::from("test2"), &streamlet2.get_public_key());
