@@ -577,3 +577,8 @@ pub async fn run_app() {
     let mut app = app::Application::new();
     app.run().await;
 }
+
+pub async fn run_app_client() {
+    let mut client = app::app_client::Client::new();
+    client.run().await; 
+}

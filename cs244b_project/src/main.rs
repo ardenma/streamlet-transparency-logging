@@ -18,6 +18,13 @@ async fn main() {
         return;
     }
 
+    /* - For application (client): app */
+    if args.len() == 2 && args[1].starts_with("client") {
+        cs244b_project::run_app_client().await;
+        // Run the app and return.
+        return;
+    }
+
     /* - For streamlet: <expected peers> <name of this host> */
     let expected_peer_count = {
         if args.len() >= 2 {

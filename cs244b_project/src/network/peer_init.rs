@@ -3,7 +3,7 @@ use log::info;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
-use std::{alloc::System, collections::HashMap};
+use std::{collections::HashMap};
 
 use super::NetworkStack;
 use crate::messages::{Message, MessageKind, MessagePayload};

@@ -2,9 +2,6 @@ use crate::messages::*;
 use crate::network::NetworkStack;
 use crate::utils::crypto::*;
 
-use bincode::{deserialize, serialize};
-use serde::{Deserialize, Serialize};
-
 pub struct AppInterface {
     app_public_key: Option<PublicKey>,
 }

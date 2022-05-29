@@ -4,7 +4,7 @@
 
 use bincode::{deserialize, serialize};
 use log::{debug, info};
-use rand::{AsByteSliceMut, Rng};
+use rand::{Rng};
 use serde::{Deserialize, Serialize};
 // use crate::utils::crypto;
 // use crate::messages::*;
@@ -13,13 +13,19 @@ use crate::messages::*;
 use crate::network::NetworkStack;
 use crate::utils::crypto::*;
 use rand::distributions::Alphanumeric;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::fmt;
+use std::net::SocketAddr;
+use log::error;
 use tokio::{
-    io::{stdin, AsyncBufReadExt, BufReader},
+    io::{stdin, AsyncBufReadExt, AsyncWriteExt, BufReader},
     select,
-    sync::mpsc,
+    sync::{mpsc, Mutex},
+    net::{TcpStream},
 };
+use std::sync::Arc;
+
+pub const SERVER_IP: &'static str = "127.0.0.1:6142";
 
 /* The data we append to our internal blockchain includes,
 for each router on the network:
@@ -29,8 +35,8 @@ for each router on the network:
 We generate this data randomly, but we base the structure
 on the Tor directory specification:
  https://gitweb.torproject.org/torspec.git/tree/dir-spec.txt */
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-struct OnionRouterBasicData {
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct OnionRouterBasicData {
     ip: String,
     onion_key: String,
     full_hash: String,
@@ -50,8 +56,8 @@ impl fmt::Display for OnionRouterBasicData {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
-struct OnionRouterNetDirectory {
+#[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
+pub struct OnionRouterNetDirectory {
     or_list: Vec<OnionRouterBasicData>,
 }
 
@@ -64,6 +70,14 @@ impl fmt::Display for OnionRouterNetDirectory {
         write!(f, "{}", s)
     }
 }
+
+
+#[derive(Deserialize, Serialize)]
+pub enum ResponseToClient {
+    Response(OnionRouterNetDirectory),
+    NoneAvailable,
+}
+
 
 impl OnionRouterBasicData {
     // Onion keys must be 1024 bits
@@ -143,14 +157,18 @@ impl Application {
 
     pub async fn run(&mut self) {
         // Set up network stack
-        // BIG TODO: extend the network stack so that it works both
-        // for streamlet and for the application.
-        // Need an additional channel here.
         let (net_sender, mut receiver) = mpsc::unbounded_channel();
         let mut net_stack = NetworkStack::new(APP_NET_TOPIC, net_sender).await;
 
         // Set up STDIN
         let mut stdin = BufReader::new(stdin()).lines();
+
+        // Set up server 
+        let (server_sender, server_receiver) = 
+            mpsc::unbounded_channel::<OnionRouterNetDirectory>();
+        tokio::spawn( async move {
+            run_server(server_receiver).await;
+        });
 
         /* Main event loop:
           - User input, other than commands, triggers new blocks
@@ -219,6 +237,7 @@ impl Application {
                                             let directory: OnionRouterNetDirectory =
                                                 deserialize(&block.data[..]).expect("Issues unwrapping directory data...");
                                             info!("Recieved directory data: {:?} from {}", directory, &message.sender_name);
+                                            server_sender.send(directory).expect("Issues communicating with server.");
                                         }
                                     } else {
                                         debug!("Unkown payload for MessageKind::AppData");
@@ -299,5 +318,74 @@ mod tests {
         let dir2: OnionRouterNetDirectory =
             deserialize(&bytes[..]).expect("Can't deserialize directory");
         assert!(dir == dir2);
+    }
+}
+
+enum ServerEvent {
+    ClientRequest(std::io::Result<(TcpStream, SocketAddr)>), 
+    NewData(Option<OnionRouterNetDirectory>),
+}
+
+async fn run_server(mut recv: mpsc::UnboundedReceiver::<OnionRouterNetDirectory>) {
+    // Set up data structure
+    let dirs : Arc<Mutex<VecDeque<OnionRouterNetDirectory>>> = 
+        Arc::new(Mutex::new(VecDeque::new()));
+
+    // Open socket 
+    let listener = tokio::net::TcpListener::bind(
+        SERVER_IP.to_string())
+        .await
+        .expect("Server can't bind locally");
+
+    println!("Server is listening on {}", SERVER_IP);
+
+    loop {
+        let evt = select! {
+            res = listener.accept() => {
+                ServerEvent::ClientRequest(res)
+            },
+            data = recv.recv() => {
+                ServerEvent::NewData(data)
+            }
+        };
+
+        match evt {
+            ServerEvent::ClientRequest(res) => {
+                match res {
+                    Ok((stream, _addr)) => {
+                        let dirs_handle = dirs.clone();
+                        tokio::spawn( async move {
+                            respond_to_client(dirs_handle, stream).await;
+                        });
+                    },
+                    Err(e) => {
+                        error!("Error accepting incoming connection: {:?}", e);
+                    }
+                }
+            }
+            ServerEvent::NewData(data) => {
+                if let Some(dir) = data {
+                    let mut handle = dirs.lock().await;
+                    handle.push_back(dir);
+                } 
+            }
+        }
+    }
+}
+
+async fn respond_to_client(dirs: Arc<Mutex<VecDeque<OnionRouterNetDirectory>>>, mut stream: TcpStream) {
+    let response = {
+        let dirs_handle = dirs.lock().await;
+        let dir = dirs_handle.front();
+        match dir {
+            Some(data) => ResponseToClient::Response((*data).clone()),
+            None => ResponseToClient::NoneAvailable,
+        }
+        // Mutex Guard dropped here
+    };
+
+    let vec = serialize(&response).expect("failed to serialize response");
+    if let Err(e) = stream.write_all(&vec).await {
+        error!("Failed to write response to client: {:?}", e);
     }
 }
