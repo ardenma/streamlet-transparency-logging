@@ -112,7 +112,7 @@ impl OnionRouterBasicData {
 
 impl OnionRouterNetDirectory {
     const MIN_SIZE: usize = 2;
-    const MAX_SIZE: usize = 20;
+    pub const MAX_SIZE: usize = 20;
 
     pub fn new() -> Self {
         let num_entries = rand::thread_rng().gen_range(
@@ -164,8 +164,11 @@ impl Application {
         let mut stdin = BufReader::new(stdin()).lines();
 
         // Set up server 
+        // Note: send the server data through a channel when received
+        // to keep network stack contained in single event
         let (server_sender, server_receiver) = 
             mpsc::unbounded_channel::<OnionRouterNetDirectory>();
+        // Server runs in infinite loop 
         tokio::spawn( async move {
             run_server(server_receiver).await;
         });
@@ -321,11 +324,21 @@ mod tests {
     }
 }
 
+
+/***** 
+"Directory server"
+
+Tor directory servers run server endpoints, which clients can request data 
+from over HTTP. This is meant to model that structure. 
+******/
 enum ServerEvent {
     ClientRequest(std::io::Result<(TcpStream, SocketAddr)>), 
     NewData(Option<OnionRouterNetDirectory>),
 }
 
+// Infinite loop: 
+// - Receive directory data from main event loop (above)
+// - When clients request directory data, send them the most recent. 
 async fn run_server(mut recv: mpsc::UnboundedReceiver::<OnionRouterNetDirectory>) {
     // Set up data structure
     let dirs : Arc<Mutex<VecDeque<OnionRouterNetDirectory>>> = 
@@ -337,6 +350,7 @@ async fn run_server(mut recv: mpsc::UnboundedReceiver::<OnionRouterNetDirectory>
         .await
         .expect("Server can't bind locally");
 
+    // Use global constant so that client can connect
     println!("Server is listening on {}", SERVER_IP);
 
     loop {
@@ -366,13 +380,15 @@ async fn run_server(mut recv: mpsc::UnboundedReceiver::<OnionRouterNetDirectory>
             ServerEvent::NewData(data) => {
                 if let Some(dir) = data {
                     let mut handle = dirs.lock().await;
-                    handle.push_back(dir);
+                    handle.push_front(dir);
                 } 
             }
         }
     }
 }
 
+// Putting this in a different task means that we could 
+// respond to multiple clients concurrently if needed. 
 async fn respond_to_client(dirs: Arc<Mutex<VecDeque<OnionRouterNetDirectory>>>, mut stream: TcpStream) {
     let response = {
         let dirs_handle = dirs.lock().await;

@@ -8,6 +8,13 @@ use tokio::{
 use log::{error, info};
 use bincode::{deserialize, serialize};
 
+// TODO: test this
+const PADDING : usize = 1000;
+const MSG_SIZE : usize = OnionRouterNetDirectory::MAX_SIZE 
+                       * std::mem::size_of::<OnionRouterBasicData>()
+                       + PADDING;
+
+/*** Basic Tor client meant to interact with directory service. ***/
 
 pub struct Client;
 
@@ -16,25 +23,28 @@ impl Client {
         Self
     }
 
+    /** Infinite loop **/
     pub async fn run(&self) { 
         let mut stdin = BufReader::new(stdin()).lines();
         loop {
+            // Starting point: everything => get data from directory server
             let _ = stdin.next_line().await.expect("Can't read from stdin");
             self.get_data().await;
         }
 
     }
     
+    // Open TCP connection to server, send request for directory, and print response
     async fn get_data(&self) {
-        // SERVER_IP
         let res = TcpStream::connect(SERVER_IP).await;
         if let Err(e) = res {
+            // Sometimes there are legit reasons for this -- no need to crash
             error!("Can't connect to server: {:?}", e);
             return;
         }
-        info!("Connected to server");
         let mut stream = res.unwrap();
-        let mut message = vec![0; 10000];
+        // Allocate a large vector 
+        let mut message = vec![0; MSG_SIZE];
 
         let res = stream.read(&mut message[..]).await;
         if let Err(e) =  res {
