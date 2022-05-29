@@ -1,25 +1,28 @@
 use libp2p::{
-    core::{muxing, transport, upgrade},
-    futures::StreamExt,
     gossipsub,
     gossipsub::{
-        GossipsubEvent, GossipsubMessage, IdentTopic as Topic, MessageAuthenticity, MessageId,
-        ValidationMode,
+        GossipsubEvent, GossipsubMessage, MessageId, IdentTopic as Topic, 
+        MessageAuthenticity, ValidationMode,
     },
     identity,
+    noise,
+    futures::StreamExt,
     mdns::{Mdns, MdnsEvent},
-    mplex, noise,
     swarm::{NetworkBehaviourEventProcess, Swarm, SwarmBuilder},
     tcp::TokioTcpConfig,
-    NetworkBehaviour, PeerId, Transport,
+    Transport,
+    core::{upgrade, transport, muxing},
+    mplex,
+    NetworkBehaviour, 
+    PeerId,
 };
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 // use log::{error, info};
-use log::error;
-use log::info;
-use std::time::Duration;
 use tokio::sync::mpsc;
+use log::error;
+use std::time::Duration;
+use log::info;
 
 // static MAX_MSG_SIZE : usize = 1974;
 
@@ -33,16 +36,18 @@ pub struct NetworkStack {
     // unsubscribe from.
     init_topic: Topic,
     init_open: bool,
+
     // Note: could save peer id, but not needed?
 }
 
 #[derive(NetworkBehaviour)]
+#[behaviour(event_process = true)]
 struct AppBehaviour {
-    // Flooding protocol -- will trigger events (see below)
+    // Flooding protocol -- will trigger events (see below) 
     // when messages are received. Will also give us "channels"
     // to publish data to peers.
     gossipsub: gossipsub::Gossipsub,
-    // A way of discovering peers that are running our protocol.
+    // A way of discovering peers that are running our protocol. 
     mdns: Mdns,
 
     // How to send arbitrary network events to the application (core logic)
@@ -52,14 +57,13 @@ struct AppBehaviour {
 
 impl NetworkBehaviourEventProcess<GossipsubEvent> for AppBehaviour {
     fn inject_event(&mut self, event: GossipsubEvent) {
-        if let GossipsubEvent::Message {
-            message,
+        if let GossipsubEvent::Message { 
+            message, 
             propagation_source: _,
-            message_id: _,
-        } = event
-        {
+            message_id: _, 
+        } = event {
             let res = self.app_sender.send(message.data);
-            if let Err(e) = res {
+            if let Err(e) =  res {
                 error!("Error communicating with main application {}", e);
             }
         }
@@ -76,13 +80,17 @@ impl NetworkBehaviourEventProcess<MdnsEvent> for AppBehaviour {
                     self.gossipsub.add_explicit_peer(&peer);
                 }
             }
-            MdnsEvent::Expired(_expired_list) => {}
+            MdnsEvent::Expired(_expired_list) => {
+              // never expire
+            }
         }
     }
 }
 
 impl NetworkStack {
-    pub async fn new(topic_name: &str, app_sender: mpsc::UnboundedSender<Vec<u8>>) -> Self {
+
+    pub async fn new(topic_name: &str, app_sender: mpsc::UnboundedSender<Vec<u8>>) ->Self {
+        
         // Key and identification
         let keys = identity::Keypair::generate_ed25519();
         let peer_id = PeerId::from(keys.public());
@@ -92,12 +100,10 @@ impl NetworkStack {
 
         let transport = NetworkStack::create_transport(&keys).await;
         let gossipsub = NetworkStack::init_gossipsub(&topic, &keys);
-        let mdns = Mdns::new(Default::default())
-            .await
-            .expect("Can't set up peer discovery protocol");
+        let mdns = Mdns::new(Default::default()).await.expect("Can't set up peer discovery protocol");
 
         // **** create the swarm ****
-        let behaviour = AppBehaviour {
+        let behaviour = AppBehaviour { 
             gossipsub: gossipsub,
             mdns: mdns,
             app_sender: app_sender,
@@ -107,24 +113,23 @@ impl NetworkStack {
                 tokio::spawn(fut);
             }))
             .build();
-
+        
         swarm
             .listen_on("/ip4/0.0.0.0/tcp/0".parse().unwrap())
             .expect("Can't set up local socket.");
 
         let init_topic = Topic::new("init");
 
-        Self {
+        Self{ 
             swarm: swarm,
-            topic: topic,
-            init_topic: init_topic,
+            topic: topic, 
+            init_topic: init_topic, 
             init_open: false,
         }
     }
 
     pub fn broadcast_message(&mut self, message: Vec<u8>) {
-        let res = self
-            .swarm
+        let res = self.swarm
             .behaviour_mut()
             .gossipsub
             .publish(self.topic.clone(), message);
@@ -135,27 +140,7 @@ impl NetworkStack {
 
     // Polling happens via stream
     pub async fn clear_unhandled_event(&mut self) {
-        self.swarm.select_next_some().await;
-    }
-
-    pub fn add_topic(&mut self, topic: &str) {
-        self.swarm
-            .behaviour_mut()
-            .gossipsub
-            .subscribe(&Topic::new(topic))
-            .expect("Can't open new topic channel");
-    }
-
-    pub fn broadcast_to_topic(&mut self, topic: &str, message: Vec<u8>) {
-        let res = self
-            .swarm
-            .behaviour_mut()
-            .gossipsub
-            .publish(Topic::new(topic), message);
-
-        if let Err(e) = res {
-            panic!("Failed to broadcast to topic {} with error {:?}.", topic, e);
-        }
+        let _ = self.swarm.select_next_some().await;
     }
 
     // Methods for handling an optional "init" channel.
@@ -190,27 +175,46 @@ impl NetworkStack {
         if !self.init_open {
             return;
         }
-        let res = self
-            .swarm
+        let res = self.swarm
             .behaviour_mut()
             .gossipsub
             .publish(self.init_topic.clone(), message);
 
-        if let Err(_e) = res {
-            info!("Not enough peers to initialize yet.");
+        if let Err(e) = res {
+            info!("Not enough peers to initialize yet: {}.", e);
         }
     }
 
-    // ---- HELPERS FOR SETUP ----
+    pub fn add_topic(&mut self, topic: &str) {
+        self.swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&Topic::new(topic))
+            .expect("Can't open new topic channel");
+    }
 
-    async fn create_transport(
-        keys: &identity::Keypair,
-    ) -> transport::Boxed<(PeerId, muxing::StreamMuxerBox)> {
+    pub fn broadcast_to_topic(&mut self, topic: &str, message: Vec<u8>) {
+        let res = self
+            .swarm
+            .behaviour_mut()
+            .gossipsub
+            .publish(Topic::new(topic), message);
+
+        if let Err(e) = res {
+            panic!("Failed to broadcast to topic {} with error {:?}.", topic, e);
+        }
+    }
+
+
+    // ---- HELPERS FOR SETUP ---- 
+
+    async fn create_transport(keys: &identity::Keypair) 
+        -> transport::Boxed<(PeerId, muxing::StreamMuxerBox)> {
         // Needed for configuring encryption on the transport layer
         let auth_keys = noise::Keypair::<noise::X25519Spec>::new()
             .into_authentic(&keys)
             .expect("Can't create auth keys for p2p channel");
-
+        
         // Create encrypted transport layer
         let transport = TokioTcpConfig::new()
             .nodelay(true)
@@ -229,24 +233,27 @@ impl NetworkStack {
             message.data.hash(&mut s);
             MessageId::from(s.finish().to_string())
         };
-
+        
         // Set up the gossipsub configuration
-        let gossipsub_config = gossipsub::GossipsubConfigBuilder::default()
+        let gossipsub_config = gossipsub::GossipsubConfigBuilder::default() 
             .heartbeat_interval(Duration::from_secs(10))
             .validation_mode(ValidationMode::Strict)
             .message_id_fn(message_id_gen)
             .build()
             .expect("Can't set up GossipSub configuration");
 
-        let mut gossipsub: gossipsub::Gossipsub =
-            gossipsub::Gossipsub::new(MessageAuthenticity::Signed(keys.clone()), gossipsub_config)
+        let mut gossipsub: gossipsub::Gossipsub = 
+            gossipsub::Gossipsub::new(
+                MessageAuthenticity::Signed(keys.clone()), 
+                gossipsub_config
+                )
                 .expect("Can't set up Gossipsub protocol");
-
+        
         // Set up the gossipsub configuration
-        gossipsub
-            .subscribe(&topic)
-            .expect("Can't subscribe to topic!");
+        gossipsub.subscribe(&topic).expect("Can't subscribe to topic!");
 
         gossipsub
+
     }
+
 }

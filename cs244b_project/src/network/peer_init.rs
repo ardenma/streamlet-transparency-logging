@@ -109,7 +109,7 @@ impl Peers {
         }
 
         if self.is_done() && net_stack.init_channel_open() {
-            info!(
+            println!(
                 "{} is done with peer discovery protocol; discovered {} peer(s)",
                 self.node_name,
                 self.peer_list.len()
