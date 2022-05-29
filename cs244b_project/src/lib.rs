@@ -46,7 +46,7 @@ enum EventType {
     EpochStart,
 }
 
-const EPOCH_LENGTH_S: u64 = 1;
+const EPOCH_LENGTH_S: u64 = 5;
 
 // ==========================
 // === Core Streamlet API ===
@@ -169,6 +169,10 @@ impl StreamletInstance {
                     EventType::UserInput(line) => {
                         if line.starts_with("end discovery") || line.starts_with("e d") {
                             peers.send_end_init(&mut net_stack);
+                        } else if line.starts_with("notarized chains") || line.starts_with("nc") {
+                            self.blockchain_manager.print_notarized_chains();
+                        } else if line.starts_with("finalized chain") || line.starts_with("fc") {
+                            self.blockchain_manager.print_finalized_chains();
                         }
                         /*
                         else {

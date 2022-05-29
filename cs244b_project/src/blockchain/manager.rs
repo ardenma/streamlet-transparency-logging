@@ -77,8 +77,8 @@ impl BlockchainManager {
                 // not crazy important
 
                 notarized_chain.append_block(notarized_block.clone(), signatures);
-                info!("Added notarized block with epoch: {}, nonce: {}, parent hash: {:?}, hash: {:?}",
-                      notarized_block.epoch, notarized_block.nonce, notarized_block.parent_hash, notarized_block.hash);
+                info!("\n\nAdded notarized block with epoch: {}, \nnonce: {}, \nparent hash: {:?}, \nhash: {:?}\nNew chain: {}\n",
+                      notarized_block.epoch, notarized_block.nonce, std::str::from_utf8(&notarized_block.parent_hash[..]), std::str::from_utf8(&notarized_block.hash[..]), notarized_chain);
                 if notarized_chain.length() > self.longest_notarized_chain_length {
                     self.longest_notarized_chain_length = notarized_chain.length();
                     info!(
@@ -140,8 +140,8 @@ impl BlockchainManager {
             self.finalized_chain = notarized_chain.copy_up_to_height(commit_2.height);
             self.finalized_chain_length = self.finalized_chain.length();
             info!(
-                "Successfully finalized chain up to: {}",
-                self.finalized_chain_length
+                "\n\nSuccessfully finalized chain, new finalized chain {}\n",
+                self.finalized_chain
             );
         }
     }
@@ -174,4 +174,19 @@ impl BlockchainManager {
         self.notarized_chains
             .retain(|x| x.length() == self.longest_notarized_chain_length);
     }
+
+    pub fn print_notarized_chains(&self) {
+        println!("************************ PRINTING NOTARIZED CHAINS **********************");
+        for chain in self.notarized_chains.iter() {
+            println!("{}", chain);
+        }
+        println!("*************************************************************************");
+    }
+
+    pub fn print_finalized_chains(&self) {
+        println!("************************ PRINTING FINALIZED CHAIN **********************");
+        println!("{}", self.finalized_chain);
+        println!("*************************************************************************");
+    }
+
 }

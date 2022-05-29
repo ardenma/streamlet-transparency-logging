@@ -2,6 +2,7 @@ use crate::blockchain::block::{Block, SignedBlock};
 use crate::utils::crypto::*;
 use crate::Sha256Hash;
 use sha2::{Digest, Sha256};
+use std::fmt;
 
 // May not end up needing this trait, I did this in case we wanted to separate the type of chains stored locally
 // from the type of chain that is ultimately pushed to a public blockchain and any other representations we may want.
@@ -79,4 +80,16 @@ impl Chain for LocalChain {
             blocks: self.blocks[..copy_idx].to_vec(),
         }
     }
+}
+
+impl fmt::Display for LocalChain {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut s = String::from("");
+
+        for signed_block in self.blocks.iter() {
+            s = format!("{}{}->", s, signed_block.block.epoch);
+        }
+
+        write!(f, "{}", s)
+    }    
 }
