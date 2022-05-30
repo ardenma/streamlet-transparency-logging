@@ -1,66 +1,46 @@
-use tokio::{
-    io::{stdin, AsyncBufReadExt, BufReader},
-    sync::mpsc,
-    select,
-};
+use tokio;
 
-use rand::Rng;
+use cs244b_project::StreamletInstance;
 
-mod network;
-
-// Demo of the networking API 
-
-enum EventType {
-    UserInput(String),
-    NetworkInput(Vec<u8>),
-}
+const DEFAULT_NUM_HOSTS: usize = 2;
 
 #[tokio::main]
 async fn main() {
-    // Initialize 
-    // (1) message queue for the network to send us data
-    // (2) message queue for us to receive data from the network
-    let (net_sender, mut receiver) = mpsc::unbounded_channel();
-    // Initialize the network stack
-    let mut net_stack = network::NetworkStack::new("test_messages", net_sender).await;
+    pretty_env_logger::init();
 
-    // Set up stdin
-    let mut stdin = BufReader::new(stdin()).lines();
+    /* Parse optional CL args: */
+    let args: Vec<String> = std::env::args().collect();
 
-    loop {
-        let evt = {
-            select! {
-                // User input
-                line = stdin.next_line() => {
-                    let line_data = line.expect("Can't get line").expect("Can't read from stdin");
-                    Some(EventType::UserInput(line_data))
-                },
-
-                // When the network receives *any* message, it forwards the data to us thru this channel
-                network_response = receiver.recv() => {
-                    Some(EventType::NetworkInput(network_response.expect("Response doesn't exist.")))
-                },
-
-                // Needs to be polled in order to make progress.
-                _ = net_stack.clear_unhandled_event() => {
-                    None
-                },
-                
-            }
-        };
-        if let Some(event) = evt {
-            match event{
-                EventType::UserInput(_line) => {
-                    println!("User input!");
-                    let rand : u32 = rand::thread_rng().gen();
-                    println!("Sending message with nonce: {}", rand);
-                    net_stack.broadcast_message(String::into_bytes(format!("Hello out there from {}", rand)));
-                }
-                EventType::NetworkInput(bytes) => {
-                    println!("Received message: {}", String::from_utf8(bytes).expect("Can't decode message to string."));
-                }
-            }
-        }
+    /* - For application (net directory service): app */
+    if args.len() == 2 && args[1].starts_with("app") {
+        cs244b_project::run_app().await;
+        // Run the app and return.
+        return;
     }
 
+    /* - For streamlet: <expected peers> <name of this host> */
+    let expected_peer_count = {
+        if args.len() >= 2 {
+            let num_hosts = args[1]
+                .clone()
+                .parse::<usize>()
+                .expect("(Optional) first argument should be host count.");
+            // Number of peers = num_hosts - this node
+            num_hosts - 1
+        } else {
+            DEFAULT_NUM_HOSTS - 1
+        }
+    };
+    let name = {
+        if args.len() >= 3 {
+            args[2].clone()
+        } else {
+            String::new()
+        }
+    };
+
+    let mut streamlet = StreamletInstance::new(name, expected_peer_count);
+
+    // Probably want to setup the id, num instances, exchange keys, etc.
+    streamlet.run().await; // Runs libp2p event loop
 }
