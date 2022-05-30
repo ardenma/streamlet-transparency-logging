@@ -192,7 +192,6 @@ impl Application {
                             net_stack.broadcast_message(
                                 serialize(&msg).expect("Can't serialize msg from app!"),
                             );
-                            info!("Sent directory to streamlet: {:?}", msg);
                         }
 
                     }
@@ -218,7 +217,7 @@ impl Application {
                                         } else {
                                             let directory: OnionRouterNetDirectory =
                                                 deserialize(&block.data[..]).expect("Issues unwrapping directory data...");
-                                            info!("Recieved directory data: {:?} from {}", directory, &message.sender_name);
+                                            info!("Recieved directory data: {} from {}", directory, &message.sender_name);
                                         }
                                     } else {
                                         debug!("Unkown payload for MessageKind::AppData");
@@ -244,8 +243,10 @@ impl Application {
     }
 
     fn make_data(&mut self) -> Message {
+        let dir = OnionRouterNetDirectory::new();
+        info!("Sending dir to Streamlet: {}", dir);
         let data =
-            serialize(&OnionRouterNetDirectory::new()).expect("Can't serialize a directory!");
+            serialize(&dir).expect("Can't serialize a directory!");
         let sig = self.keypair.sign(&data);
         self.curr_nonce += 1;
 
