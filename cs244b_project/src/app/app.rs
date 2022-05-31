@@ -97,8 +97,8 @@ impl OnionRouterBasicData {
 }
 
 impl OnionRouterNetDirectory {
-    const MIN_SIZE: usize = 2;
-    const MAX_SIZE: usize = 20;
+    const MIN_SIZE: usize = 1;
+    const MAX_SIZE: usize = 2;
 
     pub fn new() -> Self {
         let num_entries = rand::thread_rng().gen_range(
