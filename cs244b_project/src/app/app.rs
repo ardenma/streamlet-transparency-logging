@@ -12,14 +12,17 @@ use crate::app::app_interface::{APP_NET_TOPIC, APP_SENDER_ID};
 use crate::messages::*;
 use crate::network::NetworkStack;
 use crate::utils::crypto::*;
+use crate::blockchain::LocalChain;
 use rand::distributions::Alphanumeric;
 use std::collections::HashSet;
 use std::fmt;
+use std::io::Read;
 use tokio::{
     io::{stdin, AsyncBufReadExt, BufReader},
     select,
     sync::mpsc,
 };
+use std::net::{Shutdown, TcpStream};
 
 /* The data we append to our internal blockchain includes,
 for each router on the network:
@@ -187,6 +190,18 @@ impl Application {
                             net_stack.broadcast_message(
                                 serialize(&msg).expect("Can't serialize msg from app!"),
                             );
+                        } else if _line.starts_with("request chain") {
+                            // Request finalized chain
+                            let msg = self.make_latest_chain_request();
+                            info!("Made chain request with tag: {}", msg.tag);
+
+                            // Store message tag (expect the same tag back)
+                            self.outstanding_requests.insert(msg.tag);
+                            
+                            // Send message to streamlet instances
+                            net_stack.broadcast_message(
+                                serialize(&msg).expect("Can't serialize msg from app!"),
+                            );
                         } else {
                             // Otherwise: create a new directory
                             let msg = self.make_data();
@@ -220,6 +235,27 @@ impl Application {
                                                 deserialize(&block.data[..]).expect("Issues unwrapping directory data...");
                                             info!("Recieved directory data: {} from {} with tag {}", directory, &message.sender_name, message.tag);
                                         }
+                                    } else {
+                                        debug!("Unkown payload for MessageKind::AppData");
+                                    }
+                                    
+                                    // Remove corresponding tag from outstanding requests
+                                    self.outstanding_requests.remove(&message.tag);
+                                }
+                            }
+                            MessageKind::AppChainResponse => {
+                                // Only process first response to an outstanding request
+                                // response is assumed to have the same tag as the request...
+                                // TODO: do something more clever?
+                                if self.outstanding_requests.contains(&message.tag) {
+                                    // Process received block
+                                    if let MessagePayload::SocketAddr(addr) = message.payload {
+                                        let mut stream = TcpStream::connect(addr).expect("Couldn't connect to streamlet instance");
+                                        let mut msg = Vec::new();
+                                        stream.read_to_end(&mut msg).unwrap();
+                                        let chain: LocalChain = deserialize(&msg).expect("Issues unwrapping blockchain");
+                                        info!("Recieved chain: {} from {} with tag {}", chain, &message.sender_name, message.tag);
+                                        stream.shutdown(Shutdown::Both);  // Returns error on macOS
                                     } else {
                                         debug!("Unkown payload for MessageKind::AppData");
                                     }
@@ -269,6 +305,20 @@ impl Application {
         let msg = Message::new_with_defined_nonce(
             MessagePayload::None,
             MessageKind::AppBlockRequest,
+            self.curr_nonce,
+            APP_SENDER_ID,
+            "app".to_string(),
+        );
+        return msg;
+    }
+
+    /* Requests the lastest finalized chain from streamlet */
+    fn make_latest_chain_request(&mut self) -> Message {
+        self.curr_nonce += 1;
+
+        let msg = Message::new_with_defined_nonce(
+            MessagePayload::None,
+            MessageKind::AppChainRequest,
             self.curr_nonce,
             APP_SENDER_ID,
             "app".to_string(),

@@ -6,8 +6,10 @@ mod utils;
 
 use itertools::Itertools;
 use rand::Rng;
+use tokio::io::AsyncWriteExt;
 use std::collections::{hash_map::DefaultHasher, HashMap, VecDeque};
 use std::hash::Hasher;
+use bincode::{deserialize, serialize};
 
 use log::{debug, info, warn};
 use std::time::Duration;
@@ -17,6 +19,8 @@ use tokio::{
     sync::{mpsc, watch},
     time::sleep,
 };
+use std::net::SocketAddr;
+use tokio::net::TcpListener;
 
 pub use app::app_interface::*;
 pub use blockchain::{Block, BlockchainManager, Chain, LocalChain};
@@ -43,6 +47,7 @@ enum EventType {
     UserInput(String),
     NetworkInput(Vec<u8>),
     EpochStart,
+    TCPRequest,
 }
 
 const EPOCH_LENGTH_S: u64 = 5;
@@ -95,6 +100,33 @@ impl StreamletInstance {
 
         // Set up stdin
         let mut stdin = BufReader::new(stdin()).lines();
+        
+        // Set up TCP for processing application requests
+        let addr = "127.0.0.1:0".parse::<SocketAddr>().expect("Couldn't get socket addr");
+        let listener = TcpListener::bind(&addr).await.expect("Couldn't create TCP listener");
+        let local_addr = listener.local_addr().expect("Couldn't get local addr");
+        info!("Listening for inbound TCP connection at {}", local_addr);
+
+        // Accept create channels for streamlet instance to send / receive messages from the TCP thread
+        let (tcp_connect_trigger, mut tcp_connect_recv) = watch::channel("tcp_conenct");
+        let (tcp_data_sender, mut tcp_data_receiver) = mpsc::unbounded_channel();
+
+        // Spawn thread to listen for TCP requests
+        tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.expect("Failed to accept TCP connection");
+
+                // Ask streamlet for data
+                tcp_connect_trigger.send("new connection!").expect("TCP connect trigger closed?");
+                let data: Vec<u8> = tcp_data_receiver.recv().await.expect("Expected to receive data from streamlet...");
+                
+                // Send through TCP stream
+                stream.write_all(&data).await.expect("Failed writing data to TCP stream...");
+                stream.flush().await.expect("Failed to flush stream...");
+                stream.shutdown().await.expect("Failed to close stream...");
+            }
+        });
+
 
         // Set up what we need to initialize the peer discovery protocol
         let mut peers = peer_init::Peers::new(self.name.clone(), self.keypair.public, self.expected_peer_count);
@@ -142,6 +174,11 @@ impl StreamletInstance {
                     _ = net_stack.clear_unhandled_event() => {
                         None
                     },
+                    
+                    // One way to model getting a TCP request
+                    _ = tcp_connect_recv.changed() => {
+                        Some(EventType::TCPRequest)
+                    }
 
                 }
             };
@@ -159,6 +196,11 @@ impl StreamletInstance {
                         } else if line.starts_with("finalized chain") || line.starts_with("fc") {
                             self.blockchain_manager.print_finalized_chains();
                         }
+                    }
+                    // Hardcoded to send finalized chain (TODO make more modular/extensible)
+                    EventType::TCPRequest => {
+                        let finalized_chain = self.blockchain_manager.finalized_chain.clone();
+                        tcp_data_sender.send(serialize(&finalized_chain).expect("Failed to serialize chain")).expect("Failed to send chain...");
                     }
                     EventType::EpochStart => {
                         self.voted_this_epoch = false;
@@ -241,8 +283,25 @@ impl StreamletInstance {
                                 info!("Epoch: {}, responding to AppBlockRequest with {:?}", self.current_epoch, &new_message);
                                 net_stack.broadcast_to_topic("app", new_message.serialize());
                             },
+                            MessageKind::AppChainRequest => {
+                                let finalized_chain = self.blockchain_manager.export_local_chain();
+
+                                // Construct message
+                                let new_message = Message::new_with_defined_tag(
+                                    MessagePayload::SocketAddr(local_addr),
+                                    MessageKind::AppChainResponse,
+                                    message.tag,
+                                    self.id,
+                                    self.name.clone(),
+                                );
+
+                                // TOOD: just send to the application instead of bcast?
+                                info!("Epoch: {}, responding to AppChainRequest with {:?}", self.current_epoch, &new_message);
+                                net_stack.broadcast_to_topic("app", new_message.serialize());
+                            },
                             // Message only for application (we just ignore)
                             MessageKind::AppBlockResponse => { /* Do nothing? */ },
+                            MessageKind::AppChainResponse => { /* Do nothing? */ },
                             // Peer advertisement logic
                             MessageKind::PeerInit => {
                                 if let MessagePayload::PeerAdvertisement(ad) = &message.payload {

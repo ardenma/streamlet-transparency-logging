@@ -1,6 +1,7 @@
 use bincode::{deserialize, serialize};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
+use std::net::SocketAddr;
 use std::vec::Vec;
 
 use crate::blockchain::Block;
@@ -80,6 +81,7 @@ pub enum MessagePayload {
     String(String),
     PeerAdvertisement(PeerAdvertisement),
     AppData(Vec<u8>),
+    SocketAddr(SocketAddr),
     None,
 }
 
@@ -106,6 +108,8 @@ pub enum MessageKind {
     AppSend,
     AppBlockRequest,
     AppBlockResponse,
+    AppChainRequest,
+    AppChainResponse,
 }
 
 #[cfg(test)]
