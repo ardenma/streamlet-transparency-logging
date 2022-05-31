@@ -10,7 +10,8 @@ use std::collections::{hash_map::DefaultHasher, HashMap, VecDeque};
 use std::hash::Hasher;
 
 use log::{debug, info, warn};
-use std::time::Duration;
+use chrono::prelude::*;
+use std::time::{Duration, SystemTime};
 use tokio::{
     io::{stdin, AsyncBufReadExt, BufReader},
     select, spawn,
@@ -22,7 +23,7 @@ pub use app::app_interface::*;
 pub use blockchain::{Block, BlockchainManager, Chain, LocalChain};
 pub use messages::{Message, MessageKind, MessagePayload};
 pub use network::peer_init;
-pub use network::peer_init::PeerAdvertisement;
+pub use network::peer_init::{PeerAdvertisement, CompromiseType};
 pub use network::NetworkStack;
 pub use utils::crypto::*;
 
@@ -37,6 +38,8 @@ pub struct StreamletInstance {
     keypair: Keypair,
     public_keys: HashMap<String, PublicKey>,
     sorted_peer_names: Vec<String>,
+    // Solely for demo-ability - tells a node to behave in the specified compromised manner
+    pub compromise_type: CompromiseType,
 }
 
 enum EventType {
@@ -46,7 +49,7 @@ enum EventType {
     EpochStart,
 }
 
-const EPOCH_LENGTH_S: u64 = 5;
+const EPOCH_LENGTH_S: u64 = 10;
 
 // ==========================
 // === Core Streamlet API ===
@@ -77,6 +80,7 @@ impl StreamletInstance {
             keypair: keypair,
             public_keys: HashMap::from([(name.clone(), pk)]),
             sorted_peer_names: Vec::new(),
+            compromise_type: CompromiseType::NoCompromise,
         }
     }
 
@@ -174,6 +178,30 @@ impl StreamletInstance {
                         } else if line.starts_with("finalized chain") || line.starts_with("fc") {
                             self.blockchain_manager.print_finalized_chains();
                         }
+                        // Obviously, this would not exist in an actual implementation, just for demo-ability
+                        else if line.starts_with("compromise bad-blocks") || line.starts_with("bb")  {
+                            self.compromise_type = CompromiseType::BadBlocks
+                        }
+                        else if line.starts_with("compromise no-propose") || line.starts_with("np") {
+                            self.compromise_type = CompromiseType::NoPropose
+                        }
+                        else if line.starts_with("compromise multi-vote") || line.starts_with("mv") {
+                            self.compromise_type = CompromiseType::MultiVote
+                        }
+                        else if line.starts_with("compromise no-vote") || line.starts_with("nv")  {
+                            self.compromise_type = CompromiseType::NoVote
+                        }
+                        else if line.starts_with("compromise bad-publish") || line.starts_with("bp")  {
+                            // todo: this is based on how we implement a publishing check, ideally the thing being pushed to would cover this.
+                            self.compromise_type = CompromiseType::BadPublish
+                        }
+                        else if line.starts_with("compromise targetted-messages") || line.starts_with("tm") {
+                            self.compromise_type = CompromiseType::TargettedMessages
+                        }
+                        else if line.starts_with("compromise non-leader-propose") || line.starts_with("nlp") {
+                            self.compromise_type = CompromiseType::NonLeaderPropose
+                        }
+
                         /*
                         else {
                             info!("User input... adding '{}' to pending transactions", line);
@@ -187,9 +215,13 @@ impl StreamletInstance {
                         // debug!("Epoch: {} starting with leader {}...", self.current_epoch, leader);
 
                         // If I am the current leader, propose a block
-                        if leader == &self.name {
+                        if leader == &self.name 
+                         // DEMO: Or if I am compromised such that I propose when I'm not leader >:D
+                        || self.compromise_type.is_non_leader_propose() 
+                        // DEMO Unless I am compromised such that I never propose even when I'm leader >:D
+                        && !self.compromise_type.is_no_propose() {
                             if let Some(data) = self.pending_transactions.pop_front() {
-                                // Cretae message contents
+                                // Create message contents
                                 let height = u64::try_from(
                                     self.blockchain_manager.longest_notarized_chain_length,
                                 )
@@ -206,12 +238,24 @@ impl StreamletInstance {
                                 );
 
                                 // Construct message
-                                let mut message = Message::new(
-                                    MessagePayload::Block(proposed_block),
-                                    MessageKind::Propose,
-                                    self.id,
-                                    self.name.clone(),
-                                );
+                                let mut message =
+                                    // DEMO: If compromised to send bad blocks, send a phony block >:D
+                                    if self.compromise_type.is_bad_blocks() {
+                                        Message::new(
+                                            MessagePayload::Block(Block::generate_test_block(vec![])),
+                                            MessageKind::Propose,
+                                            self.id,
+                                            self.name.clone(),
+                                        )
+                                    }  
+                                    else {
+                                        Message::new(
+                                            MessagePayload::Block(proposed_block),
+                                            MessageKind::Propose,
+                                            self.id,
+                                            self.name.clone(),
+                                        )
+                                    };
 
                                 // Sign and send mesasage
                                 if self.sign_message(&mut message) {
@@ -222,7 +266,7 @@ impl StreamletInstance {
                                 }
                             }
                         }
-
+                        info!("{}, {}", self.current_epoch, Utc::now());
                         self.current_epoch += 1;
                     }
                     EventType::NetworkInput(bytes) => {
@@ -329,7 +373,11 @@ impl StreamletInstance {
                                 // If we haven't voted  yet this epoch and
                                 // we receive a message from the leader, sign and vote
                                 if let MessagePayload::Block(block) = &message.payload {
-                                    if !self.voted_this_epoch && self.check_from_leader(&message) {
+                                    if (!self.voted_this_epoch && self.check_from_leader(&message)) 
+                                    // DEMO: Technically not logically sound as this encapsulates multiple malicious acts but MultiVote compromise will just vote for everything >:D
+                                    || self.compromise_type.is_multi_vote() 
+                                    // DEMO: Unless node is compromised to never vote on anything
+                                    && !self.compromise_type.is_no_vote() {
                                         // Clone of message that we can modify
                                         let mut new_message = message.clone();
                                         

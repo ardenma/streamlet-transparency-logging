@@ -15,6 +15,8 @@ pub struct Peers {
     pub public_key: PublicKey,
     pub peer_list: HashMap<String, PublicKey>,
     num_expected: usize,
+    // Solely for demoability - this is for labeling of a peer as having been guilty of certain compromised behavior
+    pub compromise_type: CompromiseType,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -31,6 +33,50 @@ pub enum InitStatus {
     InProgress,
     Done,
     DoneStartTimer,
+}
+
+#[derive(Debug)]
+pub enum CompromiseType {
+    BadBlocks,
+    NoPropose,
+    MultiVote,
+    NoVote,
+    BadPublish,
+    TargettedMessages,
+    NonLeaderPropose,
+    NoCompromise,
+}
+impl CompromiseType {
+    pub fn is_non_leader_propose(&self) -> bool {
+        match *self {
+            CompromiseType::NonLeaderPropose => true,
+            _ => false,
+        }
+    }
+    pub fn is_bad_blocks(&self) -> bool {
+        match *self {
+            CompromiseType::BadBlocks => true,
+            _ => false,
+        }
+    }
+    pub fn is_no_propose(&self) -> bool {
+        match *self {
+            CompromiseType::NoPropose => true,
+            _ => false,
+        }
+    }
+    pub fn is_multi_vote(&self) -> bool {
+        match *self {
+            CompromiseType::MultiVote => true,
+            _ => false,
+        }
+    }
+    pub fn is_no_vote(&self) -> bool {
+        match *self {
+            CompromiseType::NoVote => true,
+            _ => false,
+        }
+    }
 }
 
 impl Peers {
@@ -51,6 +97,7 @@ impl Peers {
             public_key: public_key,
             peer_list: HashMap::new(),
             num_expected: 0,
+            compromise_type: CompromiseType::NoCompromise
         }
     }
 
@@ -155,6 +202,11 @@ impl Peers {
         info!("ending init protocol");
         info!("Final state: {:?}", self.peer_list);
         net_stack.close_init_channel();
+    }
+
+    /* Label this node as compromised (so that other peers can view it as compromised) */
+    fn set_compromise(&mut self, compromise_type: CompromiseType) {
+        self.compromise_type = compromise_type
     }
 
     /* May be useful, e.g., if you restart with one additional peer. */

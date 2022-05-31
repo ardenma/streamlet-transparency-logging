@@ -122,18 +122,6 @@ impl BlockchainManager {
             .get(i - 3)
             .expect("expected former notarized block");
         if newest.epoch == commit_2.epoch + 1 && commit_2.epoch == commit_1.epoch + 1 {
-            // let last_finalized_block = match self.finalized_chain.blocks.last() {
-            //     Some(b) => b.clone(),
-            //     None => Block::generate_test_block(&String::from("finalization test block")),
-            // };
-
-            // if last_finalized_block.epoch < commit_1.epoch {
-            //     self.finalized_chain.append_block(commit_1.clone());
-            //     self.finalized_chain.append_block(commit_2.clone());
-            // } else if last_finalized_block.epoch < commit_2.epoch {
-            //     self.finalized_chain.append_block(commit_2.clone());
-            // }
-
             // Since chain is implicitly finalized up to commit_2
             // TODO make more efficient, e.g. only add missing blocks
             // TODO fix to check 6 commits
@@ -146,6 +134,7 @@ impl BlockchainManager {
         }
     }
 
+    // TODO: Implement this push to a file & then the `BadPublish` compromised scenario
     pub fn export_local_chain(&self) {
         // not totally sure on how to specify the where to export to functionality so for now this just pretty-prints the finalized chain representing the log
         println!("{:?}", self.finalized_chain);
