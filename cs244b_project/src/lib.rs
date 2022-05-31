@@ -42,7 +42,6 @@ pub struct StreamletInstance {
 enum EventType {
     UserInput(String),
     NetworkInput(Vec<u8>),
-    DoInit,
     EpochStart,
 }
 
@@ -98,14 +97,8 @@ impl StreamletInstance {
         let mut stdin = BufReader::new(stdin()).lines();
 
         // Set up what we need to initialize the peer discovery protocol
-        let mut peers = peer_init::Peers::new(self.name.clone(), self.keypair.public);
-        let (trigger_init, mut recv_init) = mpsc::channel(1);
-        let mut needs_init = true;
-        spawn(async move {
-            // trigger after MDNS has had a chance to do its thing
-            sleep(Duration::from_secs(1)).await;
-            trigger_init.send(0).await.expect("can't send init event");
-        });
+        let mut peers = peer_init::Peers::new(self.name.clone(), self.keypair.public, self.expected_peer_count);
+        net_stack.open_init_channel();
 
         // Setup epoch timer channel
         let (timer_trigger, mut timer_recv) = watch::channel("timer_init");
@@ -140,17 +133,6 @@ impl StreamletInstance {
                         Some(EventType::NetworkInput(network_response.expect("Response doesn't exist.")))
                     },
 
-                    // One way to model the initialization event
-                    _init = recv_init.recv() => {
-                        recv_init.close();
-                        if needs_init {
-                            needs_init = false;
-                            Some(EventType::DoInit)
-                        } else {
-                            None
-                        }
-                    },
-
                     // One way to model the timer tick
                     _tick = epoch_recv.changed() => {
                         Some(EventType::EpochStart)
@@ -167,6 +149,9 @@ impl StreamletInstance {
             if let Some(event) = evt {
                 match event {
                     EventType::UserInput(line) => {
+                        if line.starts_with("init") {
+                            peers.advertise_self(&mut net_stack);
+                        }
                         if line.starts_with("end discovery") || line.starts_with("e d") {
                             peers.send_end_init(&mut net_stack);
                         } else if line.starts_with("notarized chains") || line.starts_with("nc") {
@@ -174,12 +159,6 @@ impl StreamletInstance {
                         } else if line.starts_with("finalized chain") || line.starts_with("fc") {
                             self.blockchain_manager.print_finalized_chains();
                         }
-                        /*
-                        else {
-                            info!("User input... adding '{}' to pending transactions", line);
-                            self.pending_transactions.push_back(line);
-                        }
-                        */
                     }
                     EventType::EpochStart => {
                         self.voted_this_epoch = false;
@@ -359,9 +338,6 @@ impl StreamletInstance {
                                 debug!("Unknown message format/kind - ignoring");
                             },
                         };
-                    }
-                    EventType::DoInit => {
-                        peers.start_init(&mut net_stack, self.expected_peer_count);
                     }
                 }
             }
