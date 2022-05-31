@@ -163,7 +163,7 @@ impl StreamletInstance {
                     EventType::EpochStart => {
                         self.voted_this_epoch = false;
                         let leader = self.get_epoch_leader();
-                        // debug!("Epoch: {} starting with leader {}...", self.current_epoch, leader);
+                        info!("Epoch: {} starting with leader {}...", self.current_epoch, leader);
 
                         // If I am the current leader, propose a block
                         if leader == &self.name {
@@ -251,6 +251,10 @@ impl StreamletInstance {
                                     // Initialize vector of peers (for leader election)
                                     self.sorted_peer_names =
                                         self.public_keys.keys().cloned().sorted().collect();
+                                    
+                                    // Sometimes, "default" keys (empty string) end up in the map, 
+                                    // generally because of how it's initialized. Remove these here. 
+                                    self.sorted_peer_names.retain(|x| *x != String::new());
 
                                     // If we complete the peer discovery protocol, start timer
                                     // so that they start at roughly the same time on all nodes...
