@@ -163,11 +163,13 @@ impl StreamletInstance {
                     EventType::EpochStart => {
                         self.voted_this_epoch = false;
                         let leader = self.get_epoch_leader();
-                        // debug!("Epoch: {} starting with leader {}...", self.current_epoch, leader);
+                        info!("Epoch: {} starting with leader {}...", self.current_epoch, leader);
 
                         // If I am the current leader, propose a block
                         if leader == &self.name {
+                            info!("**I'm the leader**");
                             if let Some(data) = self.pending_transactions.pop_front() {
+                                info!("**I'm proposing data**");
                                 // Cretae message contents
                                 let height = u64::try_from(
                                     self.blockchain_manager.longest_notarized_chain_length,
@@ -199,6 +201,8 @@ impl StreamletInstance {
                                 } else {
                                     debug!("something weird happened...")
                                 }
+                            } else {
+                                info!("**...but there was no data**");
                             }
                         }
 
@@ -245,12 +249,19 @@ impl StreamletInstance {
                             // Peer advertisement logic
                             MessageKind::PeerInit => {
                                 if let MessagePayload::PeerAdvertisement(ad) = &message.payload {
+                                    info!("Adding public key for: {}", ad.node_name);
                                     self.add_public_key(ad.node_name.clone(), &ad.public_key);
                                     let status = peers.recv_advertisement(&ad, &mut net_stack);
-
+                                    
+                                    
                                     // Initialize vector of peers (for leader election)
                                     self.sorted_peer_names =
                                         self.public_keys.keys().cloned().sorted().collect();
+                                    
+                                    // Sometimes a default key will end up in the map, i.e. ""
+                                    self.sorted_peer_names.retain(|x| *x != String::new());
+
+                                    info!("Peers: {:?}", self.sorted_peer_names);
 
                                     // If we complete the peer discovery protocol, start timer
                                     // so that they start at roughly the same time on all nodes...
@@ -456,6 +467,7 @@ impl StreamletInstance {
         hasher.write_u64(self.current_epoch);
         let result = hasher.finish() as usize;
         let leader_index = result % (self.expected_peer_count + 1); // +1 for self
+        info!("Epoch {} leader is {} (idx), {} (name)", self.current_epoch, leader_index, &self.sorted_peer_names[leader_index]);
         return &self.sorted_peer_names[leader_index];
     }
     /* Determines epoch leader using deterministic hash function.
