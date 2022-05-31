@@ -3,8 +3,7 @@ use libp2p::{
     futures::StreamExt,
     gossipsub,
     gossipsub::{
-        GossipsubEvent, GossipsubMessage, IdentTopic as Topic, MessageAuthenticity, MessageId,
-        ValidationMode,
+        GossipsubEvent, IdentTopic as Topic, MessageAuthenticity,
     },
     identity,
     mdns::{Mdns, MdnsEvent},
@@ -13,15 +12,15 @@ use libp2p::{
     tcp::TokioTcpConfig,
     NetworkBehaviour, PeerId, Transport,
 };
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-// use log::{error, info};
-use log::error;
-use log::info;
+use log::{error, info};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-// static MAX_MSG_SIZE : usize = 1974;
+// Set this to be the max. amount of time we're likely to be running one instance. 
+ // Generally, due to a (likely) bug in libp2p's mDNS implementation, we can't 
+ // consistently and accurately maintain connections to peers unless we set the 
+ // timeout to be very large. 
+ static IDLE_MINS : u64 = 20;
 
 pub struct NetworkStack {
     // Access to network functionality
@@ -223,18 +222,11 @@ impl NetworkStack {
     }
 
     fn init_gossipsub(topic: &Topic, keys: &identity::Keypair) -> gossipsub::Gossipsub {
-        // Create a function for (content-addressing) messages
-        let message_id_gen = |message: &GossipsubMessage| {
-            let mut s = DefaultHasher::new();
-            message.data.hash(&mut s);
-            MessageId::from(s.finish().to_string())
-        };
 
         // Set up the gossipsub configuration
         let gossipsub_config = gossipsub::GossipsubConfigBuilder::default()
             .heartbeat_interval(Duration::from_secs(10))
-            .validation_mode(ValidationMode::Strict)
-            .message_id_fn(message_id_gen)
+            .idle_timeout(Duration::from_secs(60 * IDLE_MINS))
             .build()
             .expect("Can't set up GossipSub configuration");
 
