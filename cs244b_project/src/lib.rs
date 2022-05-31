@@ -6,7 +6,7 @@ mod utils;
 
 use itertools::Itertools;
 use rand::Rng;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWriteExt, AsyncReadExt};
 use std::collections::{hash_map::DefaultHasher, HashMap, VecDeque};
 use std::hash::Hasher;
 use bincode::{deserialize, serialize};
@@ -47,7 +47,8 @@ enum EventType {
     UserInput(String),
     NetworkInput(Vec<u8>),
     EpochStart,
-    TCPRequest,
+    TCPRequestBlock,
+    TCPRequestChain,
 }
 
 const EPOCH_LENGTH_S: u64 = 5;
@@ -116,8 +117,25 @@ impl StreamletInstance {
             loop {
                 let (mut stream, _) = listener.accept().await.expect("Failed to accept TCP connection");
 
+                // Determine Request Type
+                let mut msg_bytes = Vec::new();
+                stream.read_to_end(&mut msg_bytes).await.expect("Did not recieive data");
+                let msg = String::from_utf8(msg_bytes.clone()).expect("Unable to decode msg bytes");
+                
                 // Ask streamlet for data
-                tcp_connect_trigger.send("new connection!").expect("TCP connect trigger closed?");
+                match msg.as_str() {
+                    "chain" => {
+                        debug!("(TCP Thread) asking streamlet for chain");
+                        tcp_connect_trigger.send("chain").expect("TCP connect trigger closed?");
+                    }
+                    "block" => { 
+                        debug!("(TCP Thread) asking streamlet for block");
+                        tcp_connect_trigger.send("block").expect("TCP connect trigger closed?"); 
+                    }
+                    _ => { 
+                        info!("Unknown TCP request type"); 
+                    }
+                }
                 let data: Vec<u8> = tcp_data_receiver.recv().await.expect("Expected to receive data from streamlet...");
                 
                 // Send through TCP stream
@@ -126,7 +144,6 @@ impl StreamletInstance {
                 stream.shutdown().await.expect("Failed to close stream...");
             }
         });
-
 
         // Set up what we need to initialize the peer discovery protocol
         let mut peers = peer_init::Peers::new(self.name.clone(), self.keypair.public, self.expected_peer_count);
@@ -177,7 +194,13 @@ impl StreamletInstance {
                     
                     // One way to model getting a TCP request
                     _ = tcp_connect_recv.changed() => {
-                        Some(EventType::TCPRequest)
+                        let request_type = *tcp_connect_recv.borrow();
+                        debug!("From TCP thread recieved request type {}", request_type);
+                        match request_type {
+                            "chain" => { Some(EventType::TCPRequestChain) }
+                            "block" => { Some(EventType::TCPRequestBlock) }
+                            _ => { None }
+                        }
                     }
 
                 }
@@ -197,10 +220,15 @@ impl StreamletInstance {
                             self.blockchain_manager.print_finalized_chains();
                         }
                     }
-                    // Hardcoded to send finalized chain (TODO make more modular/extensible)
-                    EventType::TCPRequest => {
-                        let finalized_chain = self.blockchain_manager.finalized_chain.clone();
+                    EventType::TCPRequestChain => {
+                        let finalized_chain = self.blockchain_manager.export_local_chain();
+                        debug!("Sending chain {} to TCP thread", finalized_chain);
                         tcp_data_sender.send(serialize(&finalized_chain).expect("Failed to serialize chain")).expect("Failed to send chain...");
+                    }
+                    EventType::TCPRequestBlock => {
+                        let (latest_finalized_block, signatures) = self.get_latest_finalized_block();
+                        debug!("Sending block {:?} to TCP thread", latest_finalized_block);
+                        tcp_data_sender.send(serialize(&latest_finalized_block).expect("Failed to serialize block")).expect("Failed to send block..");
                     }
                     EventType::EpochStart => {
                         self.voted_this_epoch = false;
@@ -265,27 +293,25 @@ impl StreamletInstance {
                                     }
                                 };
                             },
-                            // Fulfill application request for data
+                            // Fulfill application request for data (ask the app to create a TCP connection for transport)
                             MessageKind::AppBlockRequest => {
                                 let (latest_finalized_block, signatures) =
                                     self.get_latest_finalized_block();
 
                                 // Construct message
                                 let new_message = Message::new_with_defined_tag(
-                                    MessagePayload::Block(latest_finalized_block),
+                                    MessagePayload::SocketAddr(local_addr),
                                     MessageKind::AppBlockResponse,
                                     message.tag,
                                     self.id,
                                     self.name.clone(),
                                 );
 
-                                // TOOD: just send to the application instead of bcast?
                                 info!("Epoch: {}, responding to AppBlockRequest with {:?}", self.current_epoch, &new_message);
                                 net_stack.broadcast_to_topic("app", new_message.serialize());
                             },
+                            // Fulfill application request for chain (ask the app to create a TCP connection for transport)
                             MessageKind::AppChainRequest => {
-                                let finalized_chain = self.blockchain_manager.export_local_chain();
-
                                 // Construct message
                                 let new_message = Message::new_with_defined_tag(
                                     MessagePayload::SocketAddr(local_addr),
@@ -295,7 +321,6 @@ impl StreamletInstance {
                                     self.name.clone(),
                                 );
 
-                                // TOOD: just send to the application instead of bcast?
                                 info!("Epoch: {}, responding to AppChainRequest with {:?}", self.current_epoch, &new_message);
                                 net_stack.broadcast_to_topic("app", new_message.serialize());
                             },

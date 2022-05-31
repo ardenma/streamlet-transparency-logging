@@ -12,11 +12,11 @@ use crate::app::app_interface::{APP_NET_TOPIC, APP_SENDER_ID};
 use crate::messages::*;
 use crate::network::NetworkStack;
 use crate::utils::crypto::*;
-use crate::blockchain::LocalChain;
+use crate::blockchain::{LocalChain, Block};
 use rand::distributions::Alphanumeric;
 use std::collections::HashSet;
 use std::fmt;
-use std::io::Read;
+use std::io::{Read, Write};
 use tokio::{
     io::{stdin, AsyncBufReadExt, BufReader},
     select,
@@ -227,16 +227,45 @@ impl Application {
                                 // TODO: do something more clever?
                                 if self.outstanding_requests.contains(&message.tag) {
                                     // Process received block
-                                    if let MessagePayload::Block(block) = message.payload {
-                                        if block.epoch == 0 {
-                                            info!("Recieved genesis block from {} with tag {}", &message.sender_name, message.tag);
+                                    if let MessagePayload::SocketAddr(addr) = message.payload {
+                                        let mut stream = TcpStream::connect(addr).expect("Couldn't connect to streamlet instance");
+                                        
+                                        // Request a chain
+                                        if let Err(e) = stream.write(&String::from("block").into_bytes()) {
+                                            info!("Failed to request block");   
                                         } else {
-                                            let directory: OnionRouterNetDirectory =
-                                                deserialize(&block.data[..]).expect("Issues unwrapping directory data...");
-                                            info!("Recieved directory data: {} from {} with tag {}", directory, &message.sender_name, message.tag);
+                                            // Close write stream
+                                            stream.shutdown(Shutdown::Write).expect("Failed to close write stream");
+
+                                            // Read the incoming data
+                                            let mut msg = Vec::new();
+                                            stream.read_to_end(&mut msg).unwrap();
+                                            let block: Block = deserialize(&msg).expect("Failed to deserialize block");
+
+                                            // Close read stream, gives error on macOS... https://doc.rust-lang.org/std/net/struct.TcpStream.html#method.shutdown
+                                            stream.shutdown(Shutdown::Read);
+
+                                            // Handle case of block being genesis
+                                            if block.epoch == 0 {
+                                                info!("Recieved genesis block from {} with tag {}", &message.sender_name, message.tag);
+                                            } else {
+                                                let directory: OnionRouterNetDirectory =
+                                                    deserialize(&block.data[..]).expect("Issues unwrapping directory data...");
+                                                info!("Recieved directory data: {} from {} with tag {}", directory, &message.sender_name, message.tag);
+                                            }
                                         }
+                                        
+                                    // Process received block
+                                    // if let MessagePayload::Block(block) = message.payload {
+                                    //     if block.epoch == 0 {
+                                    //         info!("Recieved genesis block from {} with tag {}", &message.sender_name, message.tag);
+                                    //     } else {
+                                    //         let directory: OnionRouterNetDirectory =
+                                    //             deserialize(&block.data[..]).expect("Issues unwrapping directory data...");
+                                    //         info!("Recieved directory data: {} from {} with tag {}", directory, &message.sender_name, message.tag);
+                                    //     }
                                     } else {
-                                        debug!("Unkown payload for MessageKind::AppData");
+                                        debug!("Unkown payload for MessageKind::AppBlockResponse");
                                     }
                                     
                                     // Remove corresponding tag from outstanding requests
@@ -251,13 +280,25 @@ impl Application {
                                     // Process received block
                                     if let MessagePayload::SocketAddr(addr) = message.payload {
                                         let mut stream = TcpStream::connect(addr).expect("Couldn't connect to streamlet instance");
-                                        let mut msg = Vec::new();
-                                        stream.read_to_end(&mut msg).unwrap();
-                                        let chain: LocalChain = deserialize(&msg).expect("Issues unwrapping blockchain");
-                                        info!("Recieved chain: {} from {} with tag {}", chain, &message.sender_name, message.tag);
-                                        stream.shutdown(Shutdown::Both);  // Returns error on macOS
+                                        
+                                        // Request a chain
+                                        if let Err(e) = stream.write(&String::from("chain").into_bytes()) {
+                                            info!("Failed to request chain");   
+                                        } else {
+                                            // Close write stream
+                                            stream.shutdown(Shutdown::Write).expect("Failed to close write stream");
+
+                                            // Read the incoming data
+                                            let mut msg = Vec::new();
+                                            stream.read_to_end(&mut msg).unwrap();
+                                            let chain: LocalChain = deserialize(&msg).expect("Failed to deserialize blockchain");
+                                            info!("Recieved chain: {} from {} with tag {}", chain, &message.sender_name, message.tag);
+
+                                            // Close read stream, gives error on macOS... https://doc.rust-lang.org/std/net/struct.TcpStream.html#method.shutdown
+                                            stream.shutdown(Shutdown::Read);
+                                        }
                                     } else {
-                                        debug!("Unkown payload for MessageKind::AppData");
+                                        debug!("Unknown payload for MessageKind::AppChainResponse");
                                     }
                                     
                                     // Remove corresponding tag from outstanding requests
