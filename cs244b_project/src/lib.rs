@@ -23,7 +23,7 @@ use std::net::SocketAddr;
 use tokio::net::TcpListener;
 
 pub use app::app_interface::*;
-pub use blockchain::{Block, BlockchainManager, Chain, LocalChain};
+pub use blockchain::{Block, BlockchainManager, Chain, LocalChain, SignedBlock};
 pub use messages::{Message, MessageKind, MessagePayload};
 pub use network::peer_init;
 pub use network::peer_init::PeerAdvertisement;
@@ -227,8 +227,12 @@ impl StreamletInstance {
                     }
                     EventType::TCPRequestBlock => {
                         let (latest_finalized_block, signatures) = self.get_latest_finalized_block();
-                        debug!("Sending block {:?} to TCP thread", latest_finalized_block);
-                        tcp_data_sender.send(serialize(&latest_finalized_block).expect("Failed to serialize block")).expect("Failed to send block..");
+                        let signed_block = SignedBlock {
+                            block: latest_finalized_block,
+                            signatures: signatures,
+                        };
+                        debug!("Sending block {:?} to TCP thread", signed_block);
+                        tcp_data_sender.send(serialize(&signed_block).expect("Failed to serialize block")).expect("Failed to send block..");
                     }
                     EventType::EpochStart => {
                         self.voted_this_epoch = false;
@@ -295,9 +299,6 @@ impl StreamletInstance {
                             },
                             // Fulfill application request for data (ask the app to create a TCP connection for transport)
                             MessageKind::AppBlockRequest => {
-                                let (latest_finalized_block, signatures) =
-                                    self.get_latest_finalized_block();
-
                                 // Construct message
                                 let new_message = Message::new_with_defined_tag(
                                     MessagePayload::SocketAddr(local_addr),

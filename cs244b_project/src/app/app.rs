@@ -12,7 +12,7 @@ use crate::app::app_interface::{APP_NET_TOPIC, APP_SENDER_ID};
 use crate::messages::*;
 use crate::network::NetworkStack;
 use crate::utils::crypto::*;
-use crate::blockchain::{LocalChain, Block};
+use crate::blockchain::{LocalChain, SignedBlock, Block};
 use rand::distributions::Alphanumeric;
 use std::collections::HashSet;
 use std::fmt;
@@ -217,10 +217,6 @@ impl Application {
                         info!("Received {:?} message from {}...", &message.kind, &message.sender_name);
 
                         match &message.kind {
-                            // TODO: currently, since streamlet broadcasts responses,
-                            // we get multiple responses, either need to do point to point
-                            // communication or can alternatively track which messages
-                            // have outstanding responses
                             MessageKind::AppBlockResponse => {
                                 // Only process first response to an outstanding request
                                 // response is assumed to have the same tag as the request...
@@ -240,7 +236,7 @@ impl Application {
                                             // Read the incoming data
                                             let mut msg = Vec::new();
                                             stream.read_to_end(&mut msg).unwrap();
-                                            let block: Block = deserialize(&msg).expect("Failed to deserialize block");
+                                            let SignedBlock { block, signatures} = deserialize(&msg).expect("Failed to deserialize block");
 
                                             // Close read stream, gives error on macOS... https://doc.rust-lang.org/std/net/struct.TcpStream.html#method.shutdown
                                             stream.shutdown(Shutdown::Read);
@@ -251,19 +247,9 @@ impl Application {
                                             } else {
                                                 let directory: OnionRouterNetDirectory =
                                                     deserialize(&block.data[..]).expect("Issues unwrapping directory data...");
-                                                info!("Recieved directory data: {} from {} with tag {}", directory, &message.sender_name, message.tag);
+                                                info!("Recieved directory data: {} from {} with tag {} and signatures {:?}", directory, &message.sender_name, message.tag, &signatures);
                                             }
                                         }
-                                        
-                                    // Process received block
-                                    // if let MessagePayload::Block(block) = message.payload {
-                                    //     if block.epoch == 0 {
-                                    //         info!("Recieved genesis block from {} with tag {}", &message.sender_name, message.tag);
-                                    //     } else {
-                                    //         let directory: OnionRouterNetDirectory =
-                                    //             deserialize(&block.data[..]).expect("Issues unwrapping directory data...");
-                                    //         info!("Recieved directory data: {} from {} with tag {}", directory, &message.sender_name, message.tag);
-                                    //     }
                                     } else {
                                         debug!("Unkown payload for MessageKind::AppBlockResponse");
                                     }
