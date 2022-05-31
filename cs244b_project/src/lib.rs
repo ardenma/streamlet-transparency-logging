@@ -45,7 +45,8 @@ enum EventType {
     EpochStart,
 }
 
-const EPOCH_LENGTH_S: u64 = 5;
+const EPOCH_LENGTH_S: u64 = 2;
+const CLOCK_DRIFT_MS: u64 = 10;
 
 // ==========================
 // === Core Streamlet API ===
@@ -121,25 +122,29 @@ impl StreamletInstance {
         // Main event loop!
         loop {
             let evt = {
+                // Note that the select! macro will return the first event to complete, 
+                // cancelling the others. Marked below that all of these methods are cancel-safe. 
                 select! {
                     // User input
-                    line = stdin.next_line() => {
+                    line = stdin.next_line() => { // Cancel safe
                         let line_data = line.expect("Can't get line").expect("Can't read from stdin");
                         Some(EventType::UserInput(line_data))
                     },
 
                     // When the network receives *any* message, it forwards the data to us thru this channel
-                    network_response = receiver.recv() => {
+                    network_response = receiver.recv() => { // Cancel safe (per tokio docs)
                         Some(EventType::NetworkInput(network_response.expect("Response doesn't exist.")))
                     },
 
                     // One way to model the timer tick
-                    _tick = epoch_recv.changed() => {
+                    _tick = epoch_recv.changed() => { // Cancel safe (per tokio docs)
                         Some(EventType::EpochStart)
                     }
 
                     // Needs to be polled in order to make progress.
-                    _ = net_stack.clear_unhandled_event() => {
+                    // Cancellation safety doesn't matter, since we're just clearing out 
+                    // data we don't care about from an internal "queue". Data loss has no impact.
+                    _ = net_stack.clear_unhandled_event() => { 
                         None
                     },
 
@@ -162,12 +167,15 @@ impl StreamletInstance {
                     }
                     EventType::EpochStart => {
                         self.voted_this_epoch = false;
+                        
                         let leader = self.get_epoch_leader();
-                        info!("Epoch: {} starting with leader {}...", self.current_epoch, leader);
+                        info!("Epoch: {} starting with leader {} at {:?}", self.current_epoch, leader, std::time::SystemTime::now());
 
                         // If I am the current leader, propose a block
                         if leader == &self.name {
                             info!("**I'm the leader**");
+                            // Correct for clock drift
+                            sleep(Duration::from_millis(CLOCK_DRIFT_MS)).await;
                             if let Some(data) = self.pending_transactions.pop_front() {
                                 info!("**I'm proposing data**");
                                 // Cretae message contents
@@ -196,8 +204,8 @@ impl StreamletInstance {
 
                                 // Sign and send mesasage
                                 if self.sign_message(&mut message) {
-                                    info!("Epoch: {}, (Propose) SENDING proposal, broadcasting message {}...", self.current_epoch, message.nonce);
                                     net_stack.broadcast_message(message.serialize());
+                                    info!("Epoch: {}, (Propose) SENDING proposal, broadcasting message {}...", self.current_epoch, message.nonce);
                                 } else {
                                     debug!("something weird happened...")
                                 }
@@ -288,7 +296,6 @@ impl StreamletInstance {
                                     let mut new_message = message.clone();
 
                                     if self.is_notarized(&new_message) {
-                                        info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, checking for ancestor chain...", self.current_epoch, message.nonce);
                                         let chain_index = self.blockchain_manager.index_of_ancestor_chain(block.clone());
                                         match chain_index {
                                             Some(idx) => {
@@ -299,6 +306,8 @@ impl StreamletInstance {
                                                 if self.sign_message(&mut new_message) {
                                                     info!("Epoch: {}, (Vote) received VOTE, signing and broadcasting message {}...", self.current_epoch, new_message.nonce);
                                                     net_stack.broadcast_message(new_message.serialize());
+                                                } else {
+                                                    info!("Epoch: {}, (Vote) message was already signed.", self.current_epoch);
                                                 }
                                             }
                                             None => {
@@ -308,6 +317,9 @@ impl StreamletInstance {
                                         info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, adding to chain...", self.current_epoch, message.nonce);
                                     }
 
+                                    if self.pending_transactions.contains(&block.data) {
+                                        info!("Epoch: {}, (Vote) got VOTE for element in pending transactions... removing", self.current_epoch);
+                                    }
                                     self.pending_transactions.retain(|x| *x != block.data);
                                 } else {
                                     debug!("Unkown payload for MessageKind::Vote");
@@ -318,6 +330,7 @@ impl StreamletInstance {
                                 // If we haven't voted  yet this epoch and
                                 // we receive a message from the leader, sign and vote
                                 if let MessagePayload::Block(block) = &message.payload {
+                                    info!("Epoch: {}, (Propose) received PROPOSE, voted this epoch {}, from leader {}", self.current_epoch, self.voted_this_epoch, self.check_from_leader(&message));
                                     if !self.voted_this_epoch && self.check_from_leader(&message) {
                                         // Clone of message that we can modify
                                         let mut new_message = message.clone();
@@ -338,10 +351,13 @@ impl StreamletInstance {
                                             );
                                         }
 
+                                        if self.pending_transactions.contains(&block.data) {
+                                            info!("Epoch: {}, (Propose) got PROPOSED for element in pending transactions... removing", self.current_epoch);
+                                        }
                                         self.pending_transactions.retain(|x| *x != block.data);
                                     }
                                 } else {
-                                    debug!("Unkown payload for MessageKind::Propose");
+                                    info!("Unkown payload for MessageKind::Propose");
                                 }
                             },
                             _ => {
