@@ -239,7 +239,7 @@ impl StreamletInstance {
 
                                 // TOOD: just send to the application instead of bcast?
                                 info!("Epoch: {}, responding to AppBlockRequest with {:?}", self.current_epoch, &new_message);
-                                net_stack.broadcast_to_topic("app", new_message.serialize());
+                                app_interface.send_to_app(&mut net_stack, new_message.serialize());
                             },
                             // Message only for application (we just ignore)
                             MessageKind::AppBlockResponse => { /* Do nothing? */ },
