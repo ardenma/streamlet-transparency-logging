@@ -12,6 +12,7 @@ pub struct Message {
     pub payload: MessagePayload,
     pub kind: MessageKind,
     pub nonce: u32,
+    pub tag: u32,
     pub sender_id: u32,
     pub sender_name: String,
     signatures: Vec<Signature>,
@@ -23,6 +24,7 @@ impl Message {
             payload, 
             kind, 
             nonce: rand::thread_rng().gen(), 
+            tag: rand::thread_rng().gen(),
             sender_id,
             sender_name, 
             signatures: Vec::new() 
@@ -34,6 +36,18 @@ impl Message {
             payload, 
             kind, 
             nonce,
+            tag: rand::thread_rng().gen(),
+            sender_id,
+            sender_name, 
+            signatures: Vec::new() 
+        }
+    }
+    pub fn new_with_defined_tag(payload: MessagePayload, kind: MessageKind, tag: u32, sender_id: u32, sender_name: String) -> Message {
+        Message { 
+            payload, 
+            kind, 
+            nonce: rand::thread_rng().gen(),
+            tag,
             sender_id,
             sender_name, 
             signatures: Vec::new() 

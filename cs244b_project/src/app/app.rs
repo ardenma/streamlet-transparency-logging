@@ -178,9 +178,10 @@ impl Application {
                         if _line.starts_with("request block") {
                             // Request finalized block
                             let msg = self.make_latest_block_request();
+                            info!("Made block request with tag: {}", msg.tag);
 
-                            // Store message nonce (expect the same nonce back)
-                            self.outstanding_requests.insert(msg.nonce);
+                            // Store message tag (expect the same tag back)
+                            self.outstanding_requests.insert(msg.tag);
                             
                             // Send message to streamlet instances
                             net_stack.broadcast_message(
@@ -207,24 +208,24 @@ impl Application {
                             // have outstanding responses
                             MessageKind::AppBlockResponse => {
                                 // Only process first response to an outstanding request
-                                // response is assumed to have the same nonce as the request...
+                                // response is assumed to have the same tag as the request...
                                 // TODO: do something more clever?
-                                if self.outstanding_requests.contains(&message.nonce) {
+                                if self.outstanding_requests.contains(&message.tag) {
                                     // Process received block
                                     if let MessagePayload::Block(block) = message.payload {
                                         if block.epoch == 0 {
-                                            info!("Recieved genesis block from {}", &message.sender_name);
+                                            info!("Recieved genesis block from {} with tag {}", &message.sender_name, message.tag);
                                         } else {
                                             let directory: OnionRouterNetDirectory =
                                                 deserialize(&block.data[..]).expect("Issues unwrapping directory data...");
-                                            info!("Recieved directory data: {} from {}", directory, &message.sender_name);
+                                            info!("Recieved directory data: {} from {} with tag {}", directory, &message.sender_name, message.tag);
                                         }
                                     } else {
                                         debug!("Unkown payload for MessageKind::AppData");
                                     }
                                     
-                                    // Remove corresponding nonce from outstanding requests
-                                    self.outstanding_requests.remove(&message.nonce);
+                                    // Remove corresponding tag from outstanding requests
+                                    self.outstanding_requests.remove(&message.tag);
                                 }
                             }
                             _ => {

@@ -229,9 +229,10 @@ impl StreamletInstance {
                                     self.get_latest_finalized_block();
 
                                 // Construct message
-                                let new_message = Message::new(
+                                let new_message = Message::new_with_defined_tag(
                                     MessagePayload::Block(latest_finalized_block),
                                     MessageKind::AppBlockResponse,
+                                    message.tag,
                                     self.id,
                                     self.name.clone(),
                                 );
