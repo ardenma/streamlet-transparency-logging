@@ -258,10 +258,9 @@ impl StreamletInstance {
                                     self.sorted_peer_names =
                                         self.public_keys.keys().cloned().sorted().collect();
                                     
-                                    // Sometimes a default key will end up in the map, i.e. ""
+                                    // Sometimes, "default" keys (empty string) end up in the map, 
+                                    // generally because of how it's initialized. Remove these here. 
                                     self.sorted_peer_names.retain(|x| *x != String::new());
-
-                                    info!("Peers: {:?}", self.sorted_peer_names);
 
                                     // If we complete the peer discovery protocol, start timer
                                     // so that they start at roughly the same time on all nodes...
