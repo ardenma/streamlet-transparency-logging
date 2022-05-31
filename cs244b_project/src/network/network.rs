@@ -223,18 +223,12 @@ impl NetworkStack {
     }
 
     fn init_gossipsub(topic: &Topic, keys: &identity::Keypair) -> gossipsub::Gossipsub {
-        // Create a function for (content-addressing) messages
-        let message_id_gen = |message: &GossipsubMessage| {
-            let mut s = DefaultHasher::new();
-            message.data.hash(&mut s);
-            MessageId::from(s.finish().to_string())
-        };
 
         // Set up the gossipsub configuration
         let gossipsub_config = gossipsub::GossipsubConfigBuilder::default()
             .heartbeat_interval(Duration::from_secs(10))
             .validation_mode(ValidationMode::Strict)
-            .message_id_fn(message_id_gen)
+            .idle_timeout(Duration::from_secs(60 * 5))
             .build()
             .expect("Can't set up GossipSub configuration");
 
