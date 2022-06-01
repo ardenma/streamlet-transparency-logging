@@ -51,7 +51,7 @@ enum EventType {
     TCPRequestChain,
 }
 
-const EPOCH_LENGTH_S: u64 = 5;
+const EPOCH_LENGTH_S: u64 = 10;
 const EPOCH_DELAY_MS: u64 = 100;
 
 // ==========================
@@ -92,7 +92,7 @@ impl StreamletInstance {
 
         // Share the epoch data here
         let current_epoch_handle = Arc::new(Mutex::new(0));
-        let voted_this_epoch_handle = Arc::new(Mutex::new(false));
+        let vote_this_epoch_handle = Arc::new(Mutex::new(None));
         // Initialize
         // (1) message queue for the network to send us data
         // (2) message queue for us to receive data from the network
@@ -130,7 +130,7 @@ impl StreamletInstance {
 
         let mut current_epoch_handle_timer = current_epoch_handle.clone();
         // Epoch timer thread
-        let voted_this_epoch_handle_copy = voted_this_epoch_handle.clone();
+        let mut vote_this_epoch_handle_timer = vote_this_epoch_handle.clone();
         tokio::spawn(async move {
             // Wait until signaled that peer discovery is done
             let _ = timer_recv.changed().await.is_ok();
@@ -141,9 +141,9 @@ impl StreamletInstance {
                 let mut current_epoch = current_epoch_handle_timer.lock().await;
                 *current_epoch = *current_epoch + 1;
                 drop(current_epoch);
-                let mut voted_this_epoch = voted_this_epoch_handle_copy.lock().await;
-                *voted_this_epoch = false;
-                drop(voted_this_epoch);
+                let mut vote_this_epoch = vote_this_epoch_handle_timer.lock().await;
+                *vote_this_epoch = None;
+                drop(vote_this_epoch);
                 epoch_trigger.send("tick!").expect("Timer reciever closed?");
             }
         });
@@ -257,9 +257,12 @@ impl StreamletInstance {
                                 );
 
                                 // Sign and send mesasage
-                                if self.sign_message(&mut message) {
+                                if let Some(sig) = self.sign_message(&mut message) {
                                     info!("Epoch: {}, (Propose) SENDING proposal, broadcasting message {}...", epoch, message.nonce);
                                     net_stack.broadcast_message(message.serialize());
+                                    let mut vote_this_epoch_ref = vote_this_epoch_handle.lock().await;
+                                    *vote_this_epoch_ref = Some(sig);
+                                    drop(vote_this_epoch_ref);
                                 } else {
                                     debug!("something weird happened...")
                                 }
@@ -275,9 +278,9 @@ impl StreamletInstance {
                         let current_epoch_ref = current_epoch_handle.lock().await;
                         let epoch = *current_epoch_ref;
                         drop(current_epoch_ref);
-                        let voted_this_epoch_ref = voted_this_epoch_handle.lock().await;
-                        let voted_this_epoch = *voted_this_epoch_ref;
-                        drop(voted_this_epoch_ref);
+                        let vote_this_epoch_ref = vote_this_epoch_handle.lock().await;
+                        let vote_this_epoch = *vote_this_epoch_ref;
+                        drop(vote_this_epoch_ref);
 
                         info!("Epoch: {}, Received {:?} message...", epoch, &message.kind);
                     
@@ -362,18 +365,19 @@ impl StreamletInstance {
                                 // Also when do we stop echoing??? TODO
                                 // TODO make sure we only add a notarized block once lol
                                 if let MessagePayload::Block(block) = &message.payload {
-                                    if self.should_vote(&message, voted_this_epoch, epoch, &block, &app_interface) {
-                                        // Clone of message that we can modify
-                                        let mut new_message = message.clone();
-                                        let signed = self.sign_message(&mut new_message);
+                                    // Clone of message that we can modify
+                                    let mut new_message = message.clone();
+                                    if let Some(sig) = self.should_vote(&mut new_message, vote_this_epoch, epoch, &block, &app_interface) {
                                         // Broadcast messages that we haven't signed yet
                                         // Note: this is an inexact, but reasonable, proxy for echoing
-                                        if signed {
-                                            info!("Epoch {}: VOTED and signed message {}; broadcasting", epoch, message.nonce);
-                                            net_stack.broadcast_message(new_message.serialize());
-                                            // Once we've voted for a transaction, we should never propose it. 
-                                            self.pending_transactions.retain(|x| *x != block.data);
-                                        }
+                                        info!("Epoch {}: VOTED and signed message {}; broadcasting", epoch, message.nonce);
+                                        net_stack.broadcast_message(new_message.serialize());
+                                        // Update -- we just voted!
+                                        let mut vote_this_epoch_ref = vote_this_epoch_handle.lock().await;
+                                        *vote_this_epoch_ref = Some(sig);
+                                        drop(vote_this_epoch_ref);
+                                        // Once we've voted for a transaction, we should never propose it. 
+                                        self.pending_transactions.retain(|x| *x != block.data);
                                     }
                                     // If block is notarized and still extends from a longest notarized chain, 
                                     // then add it to the chain. 
@@ -397,19 +401,19 @@ impl StreamletInstance {
                                 // If we haven't voted  yet this epoch and
                                 // we receive a message from the leader, sign and vote
                                 if let MessagePayload::Block(block) = &message.payload {
-                                    if self.should_vote(&message, voted_this_epoch, epoch, &block, &app_interface) {
-                                        // Clone of message that we can modify
-                                        let mut new_message = message.clone();
+                                    // Clone of message that we can modify
+                                    let mut new_message = message.clone();
+                                    let signature = self.should_vote(&mut new_message, vote_this_epoch, epoch, &block, &app_interface);
+                                    if let Some(sig) = signature {
                                         // Sign and broadcast
                                         info!("Epoch: {}, (Propose) received PROPOSE, signing and broadcasting message {}...",epoch, message.nonce);
                                         new_message.kind = MessageKind::Vote;
-                                        self.sign_message(&mut new_message);
                                         net_stack.broadcast_message(new_message.serialize());
                                         // If an epoch has passed since we locked the mutex, then we may miss an epoch of voting.
                                         // This is assumed to be rare, and nodes will recover in the next epoch. 
-                                        let mut voted_this_epoch_ref = voted_this_epoch_handle.lock().await;
-                                        *voted_this_epoch_ref = true;
-                                        drop(voted_this_epoch_ref);
+                                        let mut vote_this_epoch_ref = vote_this_epoch_handle.lock().await;
+                                        *vote_this_epoch_ref = Some(sig);
+                                        drop(vote_this_epoch_ref);
 
                                         // Add the received (+ signed by us) message to the chain if its notarized
                                         if self.is_notarized(&message) {
@@ -465,16 +469,16 @@ impl StreamletInstance {
     Returns true if we successfully sign, false if it's already been signed
     by us
      @param message: the message instance with a payload to be signed */
-    fn sign_message(&self, message: &mut Message) -> bool {
+    fn sign_message(&self, message: &mut Message) -> Option<Signature> {
         // Create signature
         let signature: Signature = self.keypair.sign(message.serialize_payload().as_slice());
         // Make sure we haven't signed already
         for s in message.clone().get_signatures() {
-            if signature == s { return false; }
+            if signature == s { return None; }
         }
 
         message.sign_message(signature.clone());
-        return true;
+        return Some(signature);
     }
 
     /* Verifies a (message, signature) pair against a public key.
@@ -524,12 +528,29 @@ impl StreamletInstance {
             >= (2.0 * (self.expected_peer_count + 1) as f64 / 3.0).ceil() as usize;
     }
 
-    fn should_vote(&mut self, message: &Message, voted_this_epoch: bool, epoch: u64, block: &Block, app_interface: &AppInterface) -> bool {
-        return !voted_this_epoch && 
-            self.check_from_leader(epoch, &message) &&
-            block.epoch == epoch &&
-            self.blockchain_manager.index_of_ancestor_chain(block.clone()).is_some() &&
-            app_interface.data_is_valid(&message);
+    fn should_vote(&mut self, message: &mut Message, vote_this_epoch: Option<Signature>, epoch: u64, block: &Block, app_interface: &AppInterface) -> Option<Signature> {
+        
+        // Basic checks:
+        if !self.check_from_leader(epoch, &message) || // From the leader? 
+            // Correct epoch? 
+            block.epoch != epoch || 
+            // Descends from ancestor? 
+            self.blockchain_manager.index_of_ancestor_chain(block.clone()).is_none() ||
+            // Is the data valid? 
+            !app_interface.data_is_valid(&message)
+        {
+            return None;
+        }
+
+        let sig = self.sign_message(message);
+
+        if let Some(signature_value) = sig {
+            if vote_this_epoch.is_none() || vote_this_epoch.unwrap() == signature_value {
+                return Some(signature_value);
+            }
+        }
+
+        None 
     }
 
     /* Determines if the block associated with a message is notarized.
@@ -547,7 +568,7 @@ impl StreamletInstance {
 
         // Check leader's signature
         let signatures = message.clone().get_signatures();
-        if signatures.len() == 1 {
+        if signatures.len() >= 1 {
             return self.verify_signature(message, &signatures[0], &leader_pk);
         } else {
             return false;
