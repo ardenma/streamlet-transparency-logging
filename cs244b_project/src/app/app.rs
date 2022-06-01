@@ -247,7 +247,7 @@ impl Application {
                                             } else {
                                                 let directory: OnionRouterNetDirectory =
                                                     deserialize(&block.data[..]).expect("Issues unwrapping directory data...");
-                                                info!("Recieved directory data: {} from {} with tag {} and signatures {:?}", directory, &message.sender_name, message.tag, &signatures);
+                                                info!("Recieved directory data: {} from {}, with epoch {}, tag: {}, and signatures {:?}", directory, &message.sender_name, block.epoch, message.tag, &signatures);
                                             }
                                         }
                                     } else {
