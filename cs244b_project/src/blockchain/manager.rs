@@ -78,7 +78,7 @@ impl BlockchainManager {
 
                 notarized_chain.append_block(notarized_block.clone(), signatures);
                 info!("\n\nAdded notarized block with epoch: {}, \nnonce: {}, \nparent hash: {:?}, \nhash: {:?}\nNew chain: {}\n",
-                      notarized_block.epoch, notarized_block.nonce, std::str::from_utf8(&notarized_block.parent_hash[..]), std::str::from_utf8(&notarized_block.hash[..]), notarized_chain);
+                      notarized_block.epoch, notarized_block.nonce, String::from_utf8_lossy(&notarized_block.parent_hash[..]), String::from_utf8_lossy(&notarized_block.hash[..]), notarized_chain);
                 if notarized_chain.length() > self.longest_notarized_chain_length {
                     self.longest_notarized_chain_length = notarized_chain.length();
                     info!(
@@ -146,10 +146,9 @@ impl BlockchainManager {
         }
     }
 
-    pub fn export_local_chain(&self) {
+    pub fn export_local_chain(&self) -> LocalChain {
         // not totally sure on how to specify the where to export to functionality so for now this just pretty-prints the finalized chain representing the log
-        println!("{:?}", self.finalized_chain);
-        todo!()
+        self.finalized_chain.clone()
     }
 
     /* Returns the most recent notarized block on one of the longest notarized

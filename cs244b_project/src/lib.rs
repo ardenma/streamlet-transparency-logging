@@ -6,10 +6,12 @@ mod utils;
 
 use itertools::Itertools;
 use rand::Rng;
+use tokio::io::{AsyncWriteExt, AsyncReadExt};
 use std::collections::{hash_map::DefaultHasher, HashMap, VecDeque};
 use std::hash::Hasher;
 use tokio::sync::{Mutex};
 use std::sync::Arc;
+use bincode::{deserialize, serialize};
 
 use log::{debug, info, warn};
 use std::time::Duration;
@@ -19,9 +21,11 @@ use tokio::{
     sync::{mpsc, watch},
     time::sleep,
 };
+use std::net::SocketAddr;
+use tokio::net::TcpListener;
 
 pub use app::app_interface::*;
-pub use blockchain::{Block, BlockchainManager, Chain, LocalChain};
+pub use blockchain::{Block, BlockchainManager, Chain, LocalChain, SignedBlock};
 pub use messages::{Message, MessageKind, MessagePayload};
 pub use network::peer_init;
 pub use network::peer_init::PeerAdvertisement;
@@ -44,6 +48,8 @@ enum EventType {
     UserInput(String),
     NetworkInput(Vec<u8>),
     EpochStart,
+    TCPRequestBlock,
+    TCPRequestChain,
 }
 
 const EPOCH_LENGTH_S: u64 = 5;
@@ -99,6 +105,49 @@ impl StreamletInstance {
 
         // Set up stdin
         let mut stdin = BufReader::new(stdin()).lines();
+        
+        // Set up TCP for processing application requests
+        let addr = "127.0.0.1:0".parse::<SocketAddr>().expect("Couldn't get socket addr");
+        let listener = TcpListener::bind(&addr).await.expect("Couldn't create TCP listener");
+        let local_addr = listener.local_addr().expect("Couldn't get local addr");
+        info!("Listening for inbound TCP connection at {}", local_addr);
+
+        // Accept create channels for streamlet instance to send / receive messages from the TCP thread
+        let (tcp_connect_trigger, mut tcp_connect_recv) = watch::channel("tcp_conenct");
+        let (tcp_data_sender, mut tcp_data_receiver) = mpsc::unbounded_channel();
+
+        // Spawn thread to listen for TCP requests
+        tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.expect("Failed to accept TCP connection");
+
+                // Determine Request Type
+                let mut msg_bytes = Vec::new();
+                stream.read_to_end(&mut msg_bytes).await.expect("Did not recieive data");
+                let msg = String::from_utf8(msg_bytes.clone()).expect("Unable to decode msg bytes");
+                
+                // Ask streamlet for data
+                match msg.as_str() {
+                    "chain" => {
+                        debug!("(TCP Thread) asking streamlet for chain");
+                        tcp_connect_trigger.send("chain").expect("TCP connect trigger closed?");
+                    }
+                    "block" => { 
+                        debug!("(TCP Thread) asking streamlet for block");
+                        tcp_connect_trigger.send("block").expect("TCP connect trigger closed?"); 
+                    }
+                    _ => { 
+                        info!("Unknown TCP request type"); 
+                    }
+                }
+                let data: Vec<u8> = tcp_data_receiver.recv().await.expect("Expected to receive data from streamlet...");
+                
+                // Send through TCP stream
+                stream.write_all(&data).await.expect("Failed writing data to TCP stream...");
+                stream.flush().await.expect("Failed to flush stream...");
+                stream.shutdown().await.expect("Failed to close stream...");
+            }
+        });
 
         // Set up what we need to initialize the peer discovery protocol
         let mut peers = peer_init::Peers::new(self.name.clone(), self.keypair.public, self.expected_peer_count);
@@ -150,6 +199,17 @@ impl StreamletInstance {
                     _ = net_stack.clear_unhandled_event() => {
                         None
                     },
+                    
+                    // One way to model getting a TCP request
+                    _ = tcp_connect_recv.changed() => {
+                        let request_type = *tcp_connect_recv.borrow();
+                        debug!("From TCP thread recieved request type {}", request_type);
+                        match request_type {
+                            "chain" => { Some(EventType::TCPRequestChain) }
+                            "block" => { Some(EventType::TCPRequestBlock) }
+                            _ => { None }
+                        }
+                    }
 
                 }
             };
@@ -167,6 +227,20 @@ impl StreamletInstance {
                         } else if line.starts_with("finalized chain") || line.starts_with("fc") {
                             self.blockchain_manager.print_finalized_chains();
                         }
+                    }
+                    EventType::TCPRequestChain => {
+                        let finalized_chain = self.blockchain_manager.export_local_chain();
+                        debug!("Sending chain {} to TCP thread", finalized_chain);
+                        tcp_data_sender.send(serialize(&finalized_chain).expect("Failed to serialize chain")).expect("Failed to send chain...");
+                    }
+                    EventType::TCPRequestBlock => {
+                        let (latest_finalized_block, signatures) = self.get_latest_finalized_block();
+                        let signed_block = SignedBlock {
+                            block: latest_finalized_block,
+                            signatures: signatures,
+                        };
+                        debug!("Sending block {:?} to TCP thread", signed_block);
+                        tcp_data_sender.send(serialize(&signed_block).expect("Failed to serialize block")).expect("Failed to send block..");
                     }
                     EventType::EpochStart => {
                         self.voted_this_epoch = false;
@@ -241,14 +315,11 @@ impl StreamletInstance {
                                     }
                                 };
                             },
-                            // Fulfill application request for data
+                            // Fulfill application request for data (ask the app to create a TCP connection for transport)
                             MessageKind::AppBlockRequest => {
-                                let (latest_finalized_block, signatures) =
-                                    self.get_latest_finalized_block();
-
                                 // Construct message
                                 let new_message = Message::new_with_defined_tag(
-                                    MessagePayload::Block(latest_finalized_block),
+                                    MessagePayload::SocketAddr(local_addr),
                                     MessageKind::AppBlockResponse,
                                     message.tag,
                                     self.id,
@@ -259,8 +330,23 @@ impl StreamletInstance {
                                 info!("Epoch: {}, responding to AppBlockRequest with {:?}", epoch, &new_message);
                                 app_interface.send_to_app(&mut net_stack, new_message.serialize());
                             },
+                            // Fulfill application request for chain (ask the app to create a TCP connection for transport)
+                            MessageKind::AppChainRequest => {
+                                // Construct message
+                                let new_message = Message::new_with_defined_tag(
+                                    MessagePayload::SocketAddr(local_addr),
+                                    MessageKind::AppChainResponse,
+                                    message.tag,
+                                    self.id,
+                                    self.name.clone(),
+                                );
+
+                                info!("Epoch: {}, responding to AppChainRequest with {:?}", self.current_epoch, &new_message);
+                                net_stack.broadcast_to_topic("app", new_message.serialize());
+                            },
                             // Message only for application (we just ignore)
                             MessageKind::AppBlockResponse => { /* Do nothing? */ },
+                            MessageKind::AppChainResponse => { /* Do nothing? */ },
                             // Peer advertisement logic
                             MessageKind::PeerInit => {
                                 if let MessagePayload::PeerAdvertisement(ad) = &message.payload {
@@ -447,8 +533,12 @@ impl StreamletInstance {
     /* Determines if the block associated with a message is notarized.
     @param epoch: epoch number */
     pub fn is_notarized(&self, message: &Message) -> bool {
+        // Partially synchronous model: 
+        // - Finalize after three blocks
+        // - >= 2N/3 signatures for notarization 
+        // Note: expected peer count = excluding self; add one to get N
         return self.verify_message(message)
-            >= ((self.expected_peer_count + 1) as f64 / 2.0).ceil() as usize;
+            >= (2.0 * (self.expected_peer_count + 1) as f64 / 3.0).ceil() as usize;
     }
 
     /* Determines if the block associated with a message is notarized.
