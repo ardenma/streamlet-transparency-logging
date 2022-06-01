@@ -11,6 +11,7 @@ use std::collections::{hash_map::DefaultHasher, HashMap, VecDeque};
 use std::hash::Hasher;
 use tokio::sync::{Mutex};
 use std::sync::Arc;
+use std::env;
 use bincode::{deserialize, serialize};
 
 use log::{debug, info, warn};
@@ -204,7 +205,7 @@ impl StreamletInstance {
                         }
                     }
                     EventType::TCPRequestChain => {
-                        let finalized_chain = self.blockchain_manager.export_local_chain();
+                        let finalized_chain = self.blockchain_manager.fetch_local_finalized_chain();
                         debug!("Sending chain {} to TCP thread", finalized_chain);
                         tcp_data_sender.send(serialize(&finalized_chain).expect("Failed to serialize chain")).expect("Failed to send chain...");
                     }
@@ -229,6 +230,7 @@ impl StreamletInstance {
 
                         // If I am the current leader, propose a block
                         if leader == &self.name {
+                            self.blockchain_manager.export_local_finalized_chain_to_file(format!("{}/src/tmp/{}.txt", env::current_dir().expect("invalid current directory").display().to_string(), self.name));
                             info!("I'm the leader");
                             if let Some(data) = self.pending_transactions.pop_front() {
                                 sleep(Duration::from_millis(EPOCH_DELAY_MS)).await;

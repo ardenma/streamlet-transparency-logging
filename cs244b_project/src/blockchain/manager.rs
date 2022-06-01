@@ -1,5 +1,7 @@
 use crate::blockchain::*;
 use log::info;
+use std::fs;
+use std::fs::File;
 
 // Struct for managing multiple notarized chains and a finalied chain.
 // Provides the abstraction of a single Chain the user can query/manipulate
@@ -134,13 +136,16 @@ impl BlockchainManager {
                 "\n\nSuccessfully finalized chain, new finalized chain {}\n",
                 self.finalized_chain
             );
-
         }
     }
 
-    pub fn export_local_chain(&self) -> LocalChain {
-        // not totally sure on how to specify the where to export to functionality so for now this just pretty-prints the finalized chain representing the log
-        self.finalized_chain.clone()
+    pub fn fetch_local_finalized_chain(&self) -> LocalChain { self.finalized_chain.clone() }
+    pub fn export_local_finalized_chain_to_file(&self, local_file_path: String) {
+        info!("exporting local finalized chain to: {}", local_file_path);
+        fs::write(local_file_path, serde_json::to_string_pretty(&self.fetch_local_finalized_chain()).unwrap()).expect("failed to write to file!");
+    }
+    pub fn publish_last_finalized_block(&self) {
+        todo!("on its way!")
     }
 
     /* Returns the most recent notarized block on one of the longest notarized
@@ -176,7 +181,7 @@ impl BlockchainManager {
 
     pub fn print_finalized_chains(&self) {
         println!("************************ PRINTING FINALIZED CHAIN **********************");
-        println!("{}", self.finalized_chain);
+        println!("{:?}", self.finalized_chain);
         println!("*************************************************************************");
     }
 
