@@ -302,7 +302,7 @@ impl StreamletInstance {
                             MessageKind::Vote => {
                                 if let MessagePayload::Block(block) = &message.payload {
                                     // Clone of message that we can modify
-                                    let new_message = message.clone();
+                                    let mut new_message = message.clone();
                                     if self.is_notarized(&new_message) {
                                         info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, checking for ancestor chain...", self.current_epoch, message.nonce);
                                         let chain_index = self.blockchain_manager.index_of_ancestor_chain(block.clone());
@@ -318,10 +318,9 @@ impl StreamletInstance {
                                         }
                                     }
                                     else {
-                                        if self.voted_this_epoch {
+                                        if self.sign_message(&mut new_message) {
                                             net_stack.broadcast_message(new_message.serialize());
                                         }
-                                        info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, adding to chain...", epoch, message.nonce);
                                     }
 
                                     self.pending_transactions.retain(|x| *x != block.data);
@@ -408,6 +407,7 @@ impl StreamletInstance {
             if signature == s { return false; }
         }
         self.first_actionable_epoch = message_epoch + 1;
+        info!("{} signed message {}", self.name, message.nonce);
         message.sign_message(signature.clone());
         self.voted_this_epoch = false;
         return true;
