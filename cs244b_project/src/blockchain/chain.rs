@@ -1,6 +1,7 @@
 use crate::blockchain::block::{Block, SignedBlock};
 use crate::utils::crypto::*;
 use crate::Sha256Hash;
+use serde::{Serialize, Deserialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
 
@@ -16,7 +17,7 @@ pub trait Chain {
     fn length(&self) -> usize;
     fn copy_up_to_height(&self, height: u64) -> Self;
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalChain {
     pub blocks: Vec<SignedBlock>,
 }
