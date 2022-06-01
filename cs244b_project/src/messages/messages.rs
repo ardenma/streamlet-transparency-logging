@@ -41,10 +41,11 @@ impl Message {
             tag: rand::thread_rng().gen(),
             sender_id,
             sender_name, 
-            signatures: Vec::new() 
+            signatures: Vec::new(),
+            associated_epoch,
         }
     }
-    pub fn new_with_defined_tag(payload: MessagePayload, kind: MessageKind, tag: u32, sender_id: u32, sender_name: String) -> Message {
+    pub fn new_with_defined_tag(payload: MessagePayload, kind: MessageKind, tag: u32, sender_id: u32, sender_name: String, associated_epoch: Option<u64>) -> Message {
         Message { 
             payload, 
             kind, 

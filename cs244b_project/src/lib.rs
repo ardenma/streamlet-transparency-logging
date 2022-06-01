@@ -33,7 +33,7 @@ pub struct StreamletInstance {
     pub name: String,
     expected_peer_count: usize,
     current_epoch: u64, // This gets hazy with a monotonically updating epoch. I think this should remain time-based.
-    first_actionable_epoch: u64,
+    pub first_actionable_epoch: u64,
     voted_this_epoch: bool,
     blockchain_manager: BlockchainManager,
     pending_transactions: VecDeque<Vec<u8>>,
@@ -303,7 +303,6 @@ impl StreamletInstance {
                                 if let MessagePayload::Block(block) = &message.payload {
                                     // Clone of message that we can modify
                                     let mut new_message = message.clone();
-                                    let signed = self.sign_message(&mut new_message);
                                     if self.is_notarized(&new_message) && new_message.associated_epoch == Some(self.current_epoch) {
                                         info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, checking for ancestor chain...", self.current_epoch, message.nonce);
                                         let chain_index = self.blockchain_manager.index_of_ancestor_chain(block.clone());
@@ -319,9 +318,8 @@ impl StreamletInstance {
                                         }
                                     }
                                     else {
-                                        if new_message.associated_epoch == Some(self.current_epoch) {
+                                        if self.voted_this_epoch {
                                             net_stack.broadcast_message(new_message.serialize());
-                                            self.voted_this_epoch = signed
                                         }
                                         info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, adding to chain...", epoch, message.nonce);
                                     }
@@ -343,9 +341,9 @@ impl StreamletInstance {
                                         // Sign and broadcast
                                         info!("Epoch: {}, (Propose) received PROPOSE, signing and broadcasting message {}...",epoch, message.nonce);
                                         new_message.kind = MessageKind::Vote;
-                                        self.sign_message(&mut new_message);
-                                        net_stack.broadcast_message(new_message.serialize());
-                                        self.voted_this_epoch = true;
+                                        let signed = self.sign_message(&mut new_message);
+                                        if signed { net_stack.broadcast_message(new_message.serialize()) };
+                                        self.voted_this_epoch = signed;
 
                                         // Add the received (+ signed by us) message to the chain if its notarized
                                         if self.is_notarized(&new_message) {
@@ -401,15 +399,17 @@ impl StreamletInstance {
     Returns true if we successfully sign, false if it's already been signed
     by us
      @param message: the message instance with a payload to be signed */
-    fn sign_message(&self, message: &mut Message) -> bool {
+    fn sign_message(&mut self, message: &mut Message) -> bool {
+        if !(message.associated_epoch >= Some(self.first_actionable_epoch)) { return false; }
         // Create signature
         let signature: Signature = self.keypair.sign(message.serialize_payload().as_slice());
         // Make sure we haven't signed already
         for s in message.clone().get_signatures() {
             if signature == s { return false; }
         }
-
+        self.first_actionable_epoch = message.associated_epoch.expect("Somehow, no epoch") + 1;
         message.sign_message(signature.clone());
+        self.voted_this_epoch = true;
         return true;
     }
 
