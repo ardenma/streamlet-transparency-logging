@@ -224,7 +224,6 @@ impl StreamletInstance {
                         drop(current_epoch_ref);
 
                         let leader = self.get_epoch_leader(epoch);
-                        // Dropped at end of scope
                         
                         info!("Epoch: {} starting with leader {}...", epoch, leader);
 
