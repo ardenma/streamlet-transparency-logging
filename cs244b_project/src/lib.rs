@@ -117,35 +117,7 @@ impl StreamletInstance {
 
         // Spawn thread to listen for TCP requests
         tokio::spawn(async move {
-            loop {
-                let (mut stream, _) = listener.accept().await.expect("Failed to accept TCP connection");
-
-                // Determine Request Type
-                let mut msg_bytes = Vec::new();
-                stream.read_to_end(&mut msg_bytes).await.expect("Did not recieive data");
-                let msg = String::from_utf8(msg_bytes.clone()).expect("Unable to decode msg bytes");
-                
-                // Ask streamlet for data
-                match msg.as_str() {
-                    "chain" => {
-                        debug!("(TCP Thread) asking streamlet for chain");
-                        tcp_connect_trigger.send("chain").expect("TCP connect trigger closed?");
-                    }
-                    "block" => { 
-                        debug!("(TCP Thread) asking streamlet for block");
-                        tcp_connect_trigger.send("block").expect("TCP connect trigger closed?"); 
-                    }
-                    _ => { 
-                        info!("Unknown TCP request type"); 
-                    }
-                }
-                let data: Vec<u8> = tcp_data_receiver.recv().await.expect("Expected to receive data from streamlet...");
-                
-                // Send through TCP stream
-                stream.write_all(&data).await.expect("Failed writing data to TCP stream...");
-                stream.flush().await.expect("Failed to flush stream...");
-                stream.shutdown().await.expect("Failed to close stream...");
-            }
+            run_tcp_server(listener, tcp_data_receiver, tcp_connect_trigger).await;
         });
 
         // Set up what we need to initialize the peer discovery protocol
@@ -648,8 +620,44 @@ mod tests {
     }
 }
 
+async fn run_tcp_server(listener: TcpListener, 
+                mut tcp_data_receiver: mpsc::UnboundedReceiver<Vec<u8>>, 
+                tcp_connect_trigger: tokio::sync::watch::Sender<&str>) 
+{
+    loop {
+        let (mut stream, _) = listener.accept().await.expect("Failed to accept TCP connection");
+
+        // Determine Request Type
+        let mut msg_bytes = Vec::new();
+        stream.read_to_end(&mut msg_bytes).await.expect("Did not recieive data");
+        let msg = String::from_utf8(msg_bytes.clone()).expect("Unable to decode msg bytes");
+        
+        // Ask streamlet for data
+        match msg.as_str() {
+            "chain" => {
+                debug!("(TCP Thread) asking streamlet for chain");
+                tcp_connect_trigger.send("chain").expect("TCP connect trigger closed?");
+            }
+            "block" => { 
+                debug!("(TCP Thread) asking streamlet for block");
+                tcp_connect_trigger.send("block").expect("TCP connect trigger closed?"); 
+            }
+            _ => { 
+                info!("Unknown TCP request type"); 
+            }
+        }
+        let data: Vec<u8> = tcp_data_receiver.recv().await.expect("Expected to receive data from streamlet...");
+        
+        // Send through TCP stream
+        stream.write_all(&data).await.expect("Failed writing data to TCP stream...");
+        stream.flush().await.expect("Failed to flush stream...");
+        stream.shutdown().await.expect("Failed to close stream...");
+    }
+}
+
 // ***** APPLICATION *****
 pub async fn run_app() {
     let mut app = app::Application::new();
     app.run().await;
 }
+
