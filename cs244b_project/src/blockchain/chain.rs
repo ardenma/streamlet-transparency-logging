@@ -76,7 +76,8 @@ impl Chain for LocalChain {
     }
     fn copy_up_to_height(&self, height: u64) -> LocalChain {
         // +1 because slice end is exclusive
-        let copy_idx = usize::try_from(height + 1).expect("could not cast u64 to usize");
+        // +1 because height does not include genesis block -- it's distance *from* genesis block
+        let copy_idx = usize::try_from(height + 2).expect("could not cast u64 to usize");
         Self {
             blocks: self.blocks[..copy_idx].to_vec(),
         }
