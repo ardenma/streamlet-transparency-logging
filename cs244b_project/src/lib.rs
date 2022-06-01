@@ -363,17 +363,17 @@ impl StreamletInstance {
                                 // TODO make sure we only add a notarized block once lol
                                 if let MessagePayload::Block(block) = &message.payload {
                                     if self.should_vote(&message, voted_this_epoch, epoch, &block, &app_interface) {
-                                        let mut new_message = message.clone();
                                         // Clone of message that we can modify
+                                        let mut new_message = message.clone();
                                         let signed = self.sign_message(&mut new_message);
                                         // Broadcast messages that we haven't signed yet
                                         // Note: this is an inexact, but reasonable, proxy for echoing
                                         if signed {
                                             info!("Epoch {}: VOTED and signed message {}; broadcasting", epoch, message.nonce);
                                             net_stack.broadcast_message(new_message.serialize());
+                                            // Once we've voted for a transaction, we should never propose it. 
+                                            self.pending_transactions.retain(|x| *x != block.data);
                                         }
-                                        // Once we've voted for a transaction, we should never propose it. 
-                                        self.pending_transactions.retain(|x| *x != block.data);
                                     }
                                     // If block is notarized and still extends from a longest notarized chain, 
                                     // then add it to the chain. 
@@ -525,14 +525,6 @@ impl StreamletInstance {
     }
 
     fn should_vote(&mut self, message: &Message, voted_this_epoch: bool, epoch: u64, block: &Block, app_interface: &AppInterface) -> bool {
-        info!("Should vote: voted this epoch = {}, epoch = {}, block epoch = {}, from leader = {}, ancestor = {}, app valid = {}",
-            voted_this_epoch,
-            epoch,
-            block.epoch,
-            self.check_from_leader(epoch, &message),
-            self.blockchain_manager.index_of_ancestor_chain(block.clone()).is_some(),
-            app_interface.data_is_valid(&message)
-        );
         return !voted_this_epoch && 
             self.check_from_leader(epoch, &message) &&
             block.epoch == epoch &&
