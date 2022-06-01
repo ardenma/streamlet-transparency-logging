@@ -269,12 +269,18 @@ impl StreamletInstance {
                     EventType::NetworkInput(bytes) => {
                         // Received message
                         let message = Message::deserialize(&bytes);
+                        
+                        // Lock mutexes short-term. 
+                        // Locking for too long causes epoch timers to get out of sync. 
                         let current_epoch_ref = current_epoch_handle.lock().await;
                         let epoch = *current_epoch_ref;
                         drop(current_epoch_ref);
+                        let voted_this_epoch_ref = voted_this_epoch_handle.lock().await;
+                        let voted_this_epoch = *voted_this_epoch_ref;
+                        drop(voted_this_epoch_ref);
+
                         info!("Epoch: {}, Received {:?} message...", epoch, &message.kind);
                     
-
                         // Message processing logic
                         match &message.kind {
                             // Data from application
@@ -356,31 +362,32 @@ impl StreamletInstance {
                                 // Also when do we stop echoing??? TODO
                                 // TODO make sure we only add a notarized block once lol
                                 if let MessagePayload::Block(block) = &message.payload {
-                                    // Clone of message that we can modify
-                                    let mut new_message = message.clone();
-
-                                    if self.is_notarized(&new_message) {
-                                        info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, checking for ancestor chain...", epoch, message.nonce);
-                                        let chain_index = self.blockchain_manager.index_of_ancestor_chain(block.clone());
-                                        match chain_index {
-                                            Some(idx) => {
-                                                info!("Epoch: {}, VOTE message {} descends from a notarized chain. Adding to chain...", epoch, message.nonce);
-                                                self.blockchain_manager
-                                            .       add_to_chain(block.clone(), message.clone().get_signatures(), idx);
-                                                // Only broadcast if we haven't signed already
-                                                if self.sign_message(&mut new_message) {
-                                                    info!("Epoch: {}, (Vote) received VOTE, signing and broadcasting message {}...", epoch, new_message.nonce);
-                                                    net_stack.broadcast_message(new_message.serialize());
-                                                }
-                                            }
-                                            None => {
-                                                info!("Epoch: {}, VOTE, message {} does not descend from a notarized chain. Will not sign or broadcast.", epoch, message.nonce);
-                                            }
+                                    if self.should_vote(&message, voted_this_epoch, epoch, &block, &app_interface) {
+                                        let mut new_message = message.clone();
+                                        // Clone of message that we can modify
+                                        let signed = self.sign_message(&mut new_message);
+                                        // Broadcast messages that we haven't signed yet
+                                        // Note: this is an inexact, but reasonable, proxy for echoing
+                                        if signed {
+                                            info!("Epoch {}: VOTED and signed message {}; broadcasting", epoch, message.nonce);
+                                            net_stack.broadcast_message(new_message.serialize());
                                         }
-                                        info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, adding to chain...", epoch, message.nonce);
+                                        // Once we've voted for a transaction, we should never propose it. 
+                                        self.pending_transactions.retain(|x| *x != block.data);
                                     }
-
-                                    self.pending_transactions.retain(|x| *x != block.data);
+                                    // If block is notarized and still extends from a longest notarized chain, 
+                                    // then add it to the chain. 
+                                    if self.is_notarized(&message) {
+                                        let index = self.blockchain_manager.index_of_ancestor_chain(block.clone());
+                                        if index.is_some() {
+                                            info!("Epoch {}: Adding notarized message {} to chain {}", epoch, message.nonce, index.unwrap());
+                                            self.blockchain_manager.add_to_chain( 
+                                                block.clone(), 
+                                                message.clone().get_signatures(), 
+                                                index.unwrap()
+                                            );
+                                        }
+                                    }
                                 } else {
                                     debug!("Unkown payload for MessageKind::Vote");
                                 }
@@ -390,20 +397,22 @@ impl StreamletInstance {
                                 // If we haven't voted  yet this epoch and
                                 // we receive a message from the leader, sign and vote
                                 if let MessagePayload::Block(block) = &message.payload {
-                                    let mut voted_this_epoch = voted_this_epoch_handle.lock().await;
-                                    if !(*voted_this_epoch) && self.check_from_leader(epoch, &message) {
+                                    if self.should_vote(&message, voted_this_epoch, epoch, &block, &app_interface) {
                                         // Clone of message that we can modify
                                         let mut new_message = message.clone();
-                                        
                                         // Sign and broadcast
                                         info!("Epoch: {}, (Propose) received PROPOSE, signing and broadcasting message {}...",epoch, message.nonce);
                                         new_message.kind = MessageKind::Vote;
                                         self.sign_message(&mut new_message);
                                         net_stack.broadcast_message(new_message.serialize());
-                                        *voted_this_epoch = true;
+                                        // If an epoch has passed since we locked the mutex, then we may miss an epoch of voting.
+                                        // This is assumed to be rare, and nodes will recover in the next epoch. 
+                                        let mut voted_this_epoch_ref = voted_this_epoch_handle.lock().await;
+                                        *voted_this_epoch_ref = true;
+                                        drop(voted_this_epoch_ref);
 
                                         // Add the received (+ signed by us) message to the chain if its notarized
-                                        if self.is_notarized(&new_message) {
+                                        if self.is_notarized(&message) {
                                             info!("Epoch: {}, (Propose) received PROPOSE, message {} is NOTARIZED, adding to chain...",epoch, message.nonce);
                                             self.blockchain_manager.index_of_ancestor_chain(block.clone()).map(|idx| 
                                                 self.blockchain_manager
@@ -513,6 +522,22 @@ impl StreamletInstance {
         // Note: expected peer count = excluding self; add one to get N
         return self.verify_message(message)
             >= (2.0 * (self.expected_peer_count + 1) as f64 / 3.0).ceil() as usize;
+    }
+
+    fn should_vote(&mut self, message: &Message, voted_this_epoch: bool, epoch: u64, block: &Block, app_interface: &AppInterface) -> bool {
+        info!("Should vote: voted this epoch = {}, epoch = {}, block epoch = {}, from leader = {}, ancestor = {}, app valid = {}",
+            voted_this_epoch,
+            epoch,
+            block.epoch,
+            self.check_from_leader(epoch, &message),
+            self.blockchain_manager.index_of_ancestor_chain(block.clone()).is_some(),
+            app_interface.data_is_valid(&message)
+        );
+        return !voted_this_epoch && 
+            self.check_from_leader(epoch, &message) &&
+            block.epoch == epoch &&
+            self.blockchain_manager.index_of_ancestor_chain(block.clone()).is_some() &&
+            app_interface.data_is_valid(&message);
     }
 
     /* Determines if the block associated with a message is notarized.
