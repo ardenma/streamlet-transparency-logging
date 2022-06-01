@@ -30,12 +30,16 @@ pub struct StreamletInstance {
     pub id: u32,
     pub name: String,
     expected_peer_count: usize,
-    current_epoch: u64,
+    current_epoch: u64, // This gets hazy with a monotonically updating epoch. I think this should remain time-based.
+    first_actionable_epoch: u64,
     voted_this_epoch: bool,
     blockchain_manager: BlockchainManager,
     pending_transactions: VecDeque<Vec<u8>>,
     keypair: Keypair,
     public_keys: HashMap<String, PublicKey>,
+    // u64 is for a mapping of epoch to Message, regardless of redundancy
+    // punting on this for now but happy to implement it later if we want it
+    //epoch_message_queue: Vec<(u64, Message)>,
     sorted_peer_names: Vec<String>,
 }
 
@@ -45,7 +49,7 @@ enum EventType {
     EpochStart,
 }
 
-const EPOCH_LENGTH_S: u64 = 5;
+const EPOCH_LENGTH_S: u64 = 10;
 
 // ==========================
 // === Core Streamlet API ===
@@ -69,6 +73,7 @@ impl StreamletInstance {
             id: 0,
             expected_peer_count: expected_peer_count,
             current_epoch: 0,
+            first_actionable_epoch: 0,
             voted_this_epoch: false,
             name: name.clone(),
             blockchain_manager: BlockchainManager::new(),
@@ -190,6 +195,7 @@ impl StreamletInstance {
                                     MessageKind::Propose,
                                     self.id,
                                     self.name.clone(),
+                                    Some(self.current_epoch),
                                 );
 
                                 // Sign and send mesasage
@@ -234,6 +240,7 @@ impl StreamletInstance {
                                     MessageKind::AppBlockResponse,
                                     self.id,
                                     self.name.clone(),
+                                    Some(self.current_epoch),
                                 );
 
                                 // TOOD: just send to the application instead of bcast?
@@ -272,34 +279,29 @@ impl StreamletInstance {
                             // Implicit echo logic
                             // TODO: decide whether we think something's legit
                             MessageKind::Vote => {
-                                // Currently signing + echoing everything...
-                                // Should probably only sign things we already voted on??
-                                // Note sure... TODO
-                                // Also when do we stop echoing??? TODO
-                                // TODO make sure we only add a notarized block once lol
                                 if let MessagePayload::Block(block) = &message.payload {
                                     // Clone of message that we can modify
                                     let mut new_message = message.clone();
-
-                                    if self.is_notarized(&new_message) {
+                                    let signed = self.sign_message(&mut new_message);
+                                    if self.is_notarized(&new_message) && new_message.associated_epoch == Some(self.current_epoch) {
                                         info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, checking for ancestor chain...", self.current_epoch, message.nonce);
                                         let chain_index = self.blockchain_manager.index_of_ancestor_chain(block.clone());
                                         match chain_index {
                                             Some(idx) => {
-                                                info!("Epoch: {}, VOTE message {} descends from a notarized chain. Adding to chain...", self.current_epoch, message.nonce);
+                                                info!("Epoch: {}, VOTE message {} descends from a notarized chain and is notarized. Adding to chain...", self.current_epoch, message.nonce);
                                                 self.blockchain_manager
-                                            .       add_to_chain(block.clone(), message.clone().get_signatures(), idx);
-                                                // Only broadcast if we haven't signed already
-                                                if self.sign_message(&mut new_message) {
-                                                    info!("Epoch: {}, (Vote) received VOTE, signing and broadcasting message {}...", self.current_epoch, new_message.nonce);
-                                                    net_stack.broadcast_message(new_message.serialize());
-                                                }
+                                                    .add_to_chain(block.clone(), message.clone().get_signatures(), idx);
                                             }
                                             None => {
                                                 info!("Epoch: {}, VOTE, message {} does not descend from a notarized chain. Will not sign or broadcast.", self.current_epoch, message.nonce);
                                             }
                                         }
-                                        info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, adding to chain...", self.current_epoch, message.nonce);
+                                    }
+                                    else {
+                                        if new_message.associated_epoch == Some(self.current_epoch) {
+                                            net_stack.broadcast_message(new_message.serialize());
+                                            self.voted_this_epoch = signed
+                                        }
                                     }
 
                                     self.pending_transactions.retain(|x| *x != block.data);
@@ -513,6 +515,7 @@ mod tests {
             0,
             0,
             String::from("test"),
+            None,
         );
 
         // Signing message

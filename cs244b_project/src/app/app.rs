@@ -256,6 +256,7 @@ impl Application {
             self.curr_nonce,
             APP_SENDER_ID,
             "app".to_string(),
+            None,
         );
         msg.sign_message(sig);
         return msg;
@@ -271,6 +272,7 @@ impl Application {
             self.curr_nonce,
             APP_SENDER_ID,
             "app".to_string(),
+            None,
         );
         return msg;
     }

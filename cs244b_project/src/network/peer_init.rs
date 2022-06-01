@@ -116,6 +116,7 @@ impl Peers {
             MessageKind::PeerInit,
             self.node_id,
             self.node_name.clone(),
+            None,
         );
 
         net_stack.send_init_channel(message.serialize());
@@ -164,6 +165,7 @@ impl Peers {
             MessageKind::PeerInit,
             self.node_id,
             self.node_name.clone(),
+            None,
         );
 
         net_stack.send_init_channel(message.serialize());

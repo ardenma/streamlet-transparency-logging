@@ -15,28 +15,31 @@ pub struct Message {
     pub sender_id: u32,
     pub sender_name: String,
     signatures: Vec<Signature>,
+    pub associated_epoch: Option<u64>,
 }
 
 impl Message {
-    pub fn new(payload: MessagePayload, kind: MessageKind, sender_id: u32, sender_name: String) -> Message {
+    pub fn new(payload: MessagePayload, kind: MessageKind, sender_id: u32, sender_name: String, associated_epoch: Option<u64>) -> Message {
         Message { 
             payload, 
             kind, 
             nonce: rand::thread_rng().gen(), 
             sender_id,
             sender_name, 
-            signatures: Vec::new() 
+            signatures: Vec::new(),
+            associated_epoch,
         }
     }
     // Grr... no overloading in Rust... eventually `nonce` should be private. Security-wise it doesn't make sense this way
-    pub fn new_with_defined_nonce(payload: MessagePayload, kind: MessageKind, nonce: u32, sender_id: u32, sender_name: String) -> Message {
+    pub fn new_with_defined_nonce(payload: MessagePayload, kind: MessageKind, nonce: u32, sender_id: u32, sender_name: String, associated_epoch: Option<u64>) -> Message {
         Message { 
             payload, 
             kind, 
             nonce,
             sender_id,
             sender_name, 
-            signatures: Vec::new() 
+            signatures: Vec::new(),
+            associated_epoch,
         }
     }
     // Used to sign the message payload (block)
@@ -118,6 +121,7 @@ mod tests {
             MessageKind::Vote,
             0,
             String::from("test"),
+            None,
         );
 
         // Serdes
