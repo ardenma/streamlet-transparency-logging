@@ -429,8 +429,12 @@ impl StreamletInstance {
     /* Determines if the block associated with a message is notarized.
     @param epoch: epoch number */
     pub fn is_notarized(&self, message: &Message) -> bool {
+        // Partially synchronous model: 
+        // - Finalize after three blocks
+        // - >= 2N/3 signatures for notarization 
+        // Note: expected peer count = excluding self; add one to get N
         return self.verify_message(message)
-            >= ((self.expected_peer_count + 1) as f64 / 2.0).ceil() as usize;
+            >= (2.0 * (self.expected_peer_count + 1) as f64 / 3.0).ceil() as usize;
     }
 
     /* Determines if the block associated with a message is notarized.
