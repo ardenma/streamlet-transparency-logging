@@ -51,6 +51,8 @@ enum EventType {
     TCPRequestChain,
 }
 
+// Toggle based on number of nodes. 
+// Should be higher for more nodes s.t. time for finalization. 
 const EPOCH_LENGTH_S: u64 = 10;
 const EPOCH_DELAY_MS: u64 = 100;
 
@@ -92,6 +94,7 @@ impl StreamletInstance {
 
         // Share the epoch data here
         let current_epoch_handle = Arc::new(Mutex::new(0));
+        // If we've voted in the current epoch, store our "vote" (signature) here
         let vote_this_epoch_handle = Arc::new(Mutex::new(None));
         // Initialize
         // (1) message queue for the network to send us data
@@ -141,6 +144,7 @@ impl StreamletInstance {
                 let mut current_epoch = current_epoch_handle_timer.lock().await;
                 *current_epoch = *current_epoch + 1;
                 drop(current_epoch);
+                // Reset along with epoch counter
                 let mut vote_this_epoch = vote_this_epoch_handle_timer.lock().await;
                 *vote_this_epoch = None;
                 drop(vote_this_epoch);
@@ -219,6 +223,7 @@ impl StreamletInstance {
                     }
                     EventType::EpochStart => {
 
+                        // Want to hold locks for as little time as possible s.t. timer doesn't get out of sync
                         let current_epoch_ref = current_epoch_handle.lock().await;
                         let epoch = *current_epoch_ref;
                         drop(current_epoch_ref);
@@ -411,6 +416,7 @@ impl StreamletInstance {
                                         net_stack.broadcast_message(new_message.serialize());
                                         // If an epoch has passed since we locked the mutex, then we may miss an epoch of voting.
                                         // This is assumed to be rare, and nodes will recover in the next epoch. 
+                                        // Update - we just voted!
                                         let mut vote_this_epoch_ref = vote_this_epoch_handle.lock().await;
                                         *vote_this_epoch_ref = Some(sig);
                                         drop(vote_this_epoch_ref);
