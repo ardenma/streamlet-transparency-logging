@@ -214,7 +214,7 @@ impl StreamletInstance {
                                     MessageKind::Propose,
                                     self.id,
                                     self.name.clone(),
-                                    Some(self.current_epoch),
+                                    Some(epoch),
                                 );
 
                                 // Sign and send mesasage
@@ -302,8 +302,8 @@ impl StreamletInstance {
                             MessageKind::Vote => {
                                 if let MessagePayload::Block(block) = &message.payload {
                                     // Clone of message that we can modify
-                                    let mut new_message = message.clone();
-                                    if self.is_notarized(&new_message) && new_message.associated_epoch == Some(self.current_epoch) {
+                                    let new_message = message.clone();
+                                    if self.is_notarized(&new_message) {
                                         info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, checking for ancestor chain...", self.current_epoch, message.nonce);
                                         let chain_index = self.blockchain_manager.index_of_ancestor_chain(block.clone());
                                         match chain_index {
@@ -343,7 +343,6 @@ impl StreamletInstance {
                                         new_message.kind = MessageKind::Vote;
                                         let signed = self.sign_message(&mut new_message);
                                         if signed { net_stack.broadcast_message(new_message.serialize()) };
-                                        self.voted_this_epoch = signed;
 
                                         // Add the received (+ signed by us) message to the chain if its notarized
                                         if self.is_notarized(&new_message) {
@@ -400,16 +399,17 @@ impl StreamletInstance {
     by us
      @param message: the message instance with a payload to be signed */
     fn sign_message(&mut self, message: &mut Message) -> bool {
-        if !(message.associated_epoch >= Some(self.first_actionable_epoch)) { return false; }
+        let message_epoch = message.associated_epoch.expect("Somehow, no epoch");
+        if !(message_epoch >= self.first_actionable_epoch) { return false; }
         // Create signature
         let signature: Signature = self.keypair.sign(message.serialize_payload().as_slice());
         // Make sure we haven't signed already
         for s in message.clone().get_signatures() {
             if signature == s { return false; }
         }
-        self.first_actionable_epoch = message.associated_epoch.expect("Somehow, no epoch") + 1;
+        self.first_actionable_epoch = message_epoch + 1;
         message.sign_message(signature.clone());
-        self.voted_this_epoch = true;
+        self.voted_this_epoch = false;
         return true;
     }
 
