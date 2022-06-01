@@ -372,17 +372,20 @@ impl StreamletInstance {
                                 if let MessagePayload::Block(block) = &message.payload {
                                     // Clone of message that we can modify
                                     let mut new_message = message.clone();
-                                    if let Some(sig) = self.should_vote(&mut new_message, vote_this_epoch, epoch, &block, &app_interface) {
-                                        // Broadcast messages that we haven't signed yet
-                                        // Note: this is an inexact, but reasonable, proxy for echoing
-                                        info!("Epoch {}: VOTED and signed message {}; broadcasting", epoch, message.nonce);
-                                        net_stack.broadcast_message(new_message.serialize());
-                                        // Update -- we just voted!
-                                        let mut vote_this_epoch_ref = vote_this_epoch_handle.lock().await;
-                                        *vote_this_epoch_ref = Some(sig);
-                                        drop(vote_this_epoch_ref);
-                                        // Once we've voted for a transaction, we should never propose it. 
-                                        self.pending_transactions.retain(|x| *x != block.data);
+                                    // Don't "endorse" this vote unless you've already gotten a proposal 
+                                    if vote_this_epoch.is_some() {
+                                        if let Some(sig) = self.should_vote(&mut new_message, vote_this_epoch, epoch, &block, &app_interface) {
+                                            // Broadcast messages that we haven't signed yet
+                                            // Note: this is an inexact, but reasonable, proxy for echoing
+                                            info!("Epoch {}: VOTED and signed message {}; broadcasting", epoch, message.nonce);
+                                            net_stack.broadcast_message(new_message.serialize());
+                                            // Update -- we just voted!
+                                            let mut vote_this_epoch_ref = vote_this_epoch_handle.lock().await;
+                                            *vote_this_epoch_ref = Some(sig);
+                                            drop(vote_this_epoch_ref);
+                                            // Once we've voted for a transaction, we should never propose it. 
+                                            self.pending_transactions.retain(|x| *x != block.data);
+                                        }
                                     }
                                     // If block is notarized and still extends from a longest notarized chain, 
                                     // then add it to the chain. 
