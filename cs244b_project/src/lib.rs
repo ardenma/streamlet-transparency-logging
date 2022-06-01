@@ -36,7 +36,6 @@ pub struct StreamletInstance {
     pub id: u32,
     pub name: String,
     expected_peer_count: usize,
-    voted_this_epoch: bool,
     blockchain_manager: BlockchainManager,
     pending_transactions: VecDeque<Vec<u8>>,
     keypair: Keypair,
@@ -76,7 +75,6 @@ impl StreamletInstance {
         Self {
             id: 0,
             expected_peer_count: expected_peer_count,
-            voted_this_epoch: false,
             name: name.clone(),
             blockchain_manager: BlockchainManager::new(),
             pending_transactions: VecDeque::new(),
@@ -94,6 +92,7 @@ impl StreamletInstance {
 
         // Share the epoch data here
         let current_epoch_handle = Arc::new(Mutex::new(0));
+        let voted_this_epoch_handle = Arc::new(Mutex::new(false));
         // Initialize
         // (1) message queue for the network to send us data
         // (2) message queue for us to receive data from the network
@@ -159,6 +158,7 @@ impl StreamletInstance {
 
         let mut current_epoch_handle_timer = current_epoch_handle.clone();
         // Epoch timer thread
+        let voted_this_epoch_handle_copy = voted_this_epoch_handle.clone();
         tokio::spawn(async move {
             // Wait until signaled that peer discovery is done
             let _ = timer_recv.changed().await.is_ok();
@@ -169,6 +169,9 @@ impl StreamletInstance {
                 let mut current_epoch = current_epoch_handle_timer.lock().await;
                 *current_epoch = *current_epoch + 1;
                 drop(current_epoch);
+                let mut voted_this_epoch = voted_this_epoch_handle_copy.lock().await;
+                *voted_this_epoch = false;
+                drop(voted_this_epoch);
                 epoch_trigger.send("tick!").expect("Timer reciever closed?");
             }
         });
@@ -243,7 +246,6 @@ impl StreamletInstance {
                         tcp_data_sender.send(serialize(&signed_block).expect("Failed to serialize block")).expect("Failed to send block..");
                     }
                     EventType::EpochStart => {
-                        self.voted_this_epoch = false;
 
                         let current_epoch_ref = current_epoch_handle.lock().await;
                         let epoch = *current_epoch_ref;
@@ -341,7 +343,7 @@ impl StreamletInstance {
                                     self.name.clone(),
                                 );
 
-                                info!("Epoch: {}, responding to AppChainRequest with {:?}", self.current_epoch, &new_message);
+                                info!("Epoch: {}, responding to AppChainRequest with {:?}", epoch, &new_message);
                                 net_stack.broadcast_to_topic("app", new_message.serialize());
                             },
                             // Message only for application (we just ignore)
@@ -417,7 +419,8 @@ impl StreamletInstance {
                                 // If we haven't voted  yet this epoch and
                                 // we receive a message from the leader, sign and vote
                                 if let MessagePayload::Block(block) = &message.payload {
-                                    if !self.voted_this_epoch && self.check_from_leader(epoch, &message) {
+                                    let mut voted_this_epoch = voted_this_epoch_handle.lock().await;
+                                    if !(*voted_this_epoch) && self.check_from_leader(epoch, &message) {
                                         // Clone of message that we can modify
                                         let mut new_message = message.clone();
                                         
@@ -426,7 +429,7 @@ impl StreamletInstance {
                                         new_message.kind = MessageKind::Vote;
                                         self.sign_message(&mut new_message);
                                         net_stack.broadcast_message(new_message.serialize());
-                                        self.voted_this_epoch = true;
+                                        *voted_this_epoch = true;
 
                                         // Add the received (+ signed by us) message to the chain if its notarized
                                         if self.is_notarized(&new_message) {
