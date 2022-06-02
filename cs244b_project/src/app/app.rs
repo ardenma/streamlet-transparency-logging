@@ -145,10 +145,7 @@ impl Application {
     }
 
     pub async fn run(&mut self) {
-        // Set up network stack
-        // BIG TODO: extend the network stack so that it works both
-        // for streamlet and for the application.
-        // Need an additional channel here.
+
         let (net_sender, mut receiver) = mpsc::unbounded_channel();
         let mut net_stack = NetworkStack::new(APP_NET_TOPIC, net_sender).await;
 
@@ -246,11 +243,6 @@ impl Application {
                                 debug!("Unknown message format/kind - ignoring");
                             }
                         }
-                        // TODO
-                        // - Match on message type
-                        // - (If doing so) validate
-                        // - Deserialize + print
-                        // - Option: store?
                     }
                 }
             }
@@ -363,20 +355,6 @@ impl Application {
             }
         }
     }
-
-    // TODO, potentially optional: two-way validation
-    // - App signs new directories when created (function here)
-    //   Signs with multiple keys to simulate multiple directories.
-    // - App initializes (like peer_init on network stack)
-    //   so that everyone has the right keys.
-    // - Streamlet validates data received from app using PKs
-    // - App validates data received from streamlet using PKs
-
-    // TODO, potentially optional, for demo:
-    // - Run a web server in a different thread here
-    // - Implement a client that can make HTTP requests to it
-    // - Send the directory and the streamlet blockchain
-    // - (Like an IRL situation)
 }
 
 #[cfg(test)]

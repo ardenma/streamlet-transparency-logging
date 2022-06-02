@@ -84,7 +84,6 @@ impl StreamletInstance {
         let mut csprng = OsRng {};
         let keypair: Keypair = Keypair::generate(&mut csprng);
         let pk: PublicKey = keypair.public.clone();
-        // let id = rand::thread_rng().gen();  // TODO: set this up in peer init? currently chance for collision
 
         // Build the streamlet instance
         Self {
@@ -398,7 +397,6 @@ impl StreamletInstance {
 
                                     // If we complete the peer discovery protocol, start timer
                                     // so that they start at roughly the same time on all nodes...
-                                    // TODO do a better job of syncing timers...
                                     match status {
                                         peer_init::InitStatus::DoneStartTimer => {
                                             let _ = timer_trigger.send("start!").is_ok();
@@ -410,13 +408,7 @@ impl StreamletInstance {
                                 }
                             },
                             // Implicit echo logic
-                            // TODO: decide whether we think something's legit
                             MessageKind::Vote => {
-                                // Currently signing + echoing everything...
-                                // Should probably only sign things we already voted on??
-                                // Note sure... TODO
-                                // Also when do we stop echoing??? TODO
-                                // TODO make sure we only add a notarized block once lol
                                 if let MessagePayload::Block(block) = &message.payload {
                                     // Clone of message that we can modify
                                     let mut new_message = message.clone();
@@ -561,7 +553,7 @@ impl StreamletInstance {
         let mut num_valid_signatures = 0;
         let signatures = message.clone().get_signatures(); // Check all signatures
 
-        // Check all sigatures on the message (TODO check duplicates)
+        // Check all sigatures on the message
         for signature in signatures.iter() {
             // Check against all known pk's
             for pk in self.public_keys.values() {
@@ -647,11 +639,10 @@ impl StreamletInstance {
         let leader_index = result % (self.expected_peer_count + 1); // +1 for self
         return &self.sorted_peer_names[leader_index];
     }
-    /* Determines epoch leader using deterministic hash function.
-    @param epoch: epoch number
-    Note: for testing, should be taken care of in peer discovery. */
+
+    /* Add public key to local data structure. */
     pub fn add_public_key(&mut self, instance_name: String, pk: &PublicKey) {
-        self.public_keys.insert(instance_name, pk.clone()); // TODO catch errors with insertion?
+        self.public_keys.insert(instance_name, pk.clone());
     }
 }
 

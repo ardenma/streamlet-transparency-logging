@@ -64,8 +64,7 @@ impl BlockchainManager {
         return Some(chain_idx);
     }
 
-    /* Tries to adds block to a notarized chain and tries to finalize the
-    chain (TODO make more efficient)
+    /* Tries to adds block to a notarized chain and tries to finalize the chain
      @param notarized_block: notarized_block to add */
     pub fn add_to_chain(&mut self, notarized_block: Block, signatures: Vec<Signature>, chain_index: usize) {
         let notarized_chain_opt = self.notarized_chains.get_mut(chain_index);         
@@ -94,8 +93,7 @@ impl BlockchainManager {
     }
 
     /* Tries to finalize the notarized chain given by notarized_chain_idx.
-    If finalization succeeds, updates the finalized chain (currently by copying
-    it, TODO make more efficient)
+        If finalization succeeds, updates the finalized chain .
      @param notarized_chain_idx: index of the notarized chain (in the vec) */
     fn try_finalize(&mut self, notarized_chain_idx: usize) {
         // Check if the last 3 consecutive notarized blocks have sequential epochs and if so, commit the first two to finalized log
