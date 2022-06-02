@@ -3,16 +3,16 @@
 */
 
 use bincode::{deserialize, serialize};
-use log::{debug, info};
-use rand::{AsByteSliceMut, Rng};
+use log::{debug, info, error};
+use rand::{Rng};
 use serde::{Deserialize, Serialize};
 // use crate::utils::crypto;
 // use crate::messages::*;
-use crate::app::app_interface::{APP_NET_TOPIC, APP_SENDER_ID};
+use crate::app::app_interface::{APP_NET_TOPIC, APP_SENDER_ID, APP_NAME};
 use crate::messages::*;
 use crate::network::NetworkStack;
 use crate::utils::crypto::*;
-use crate::blockchain::{LocalChain, SignedBlock, Block};
+use crate::blockchain::{LocalChain, SignedBlock};
 use rand::distributions::Alphanumeric;
 use std::collections::HashSet;
 use std::fmt;
@@ -22,7 +22,7 @@ use tokio::{
     select,
     sync::mpsc,
 };
-use std::net::{Shutdown, TcpStream};
+use std::net::{Shutdown, TcpStream, SocketAddr};
 
 /* The data we append to our internal blockchain includes,
 for each router on the network:
@@ -211,84 +211,35 @@ impl Application {
                         }
 
                     }
-                    AppEventType::NetworkInput(_input) => {
+                    AppEventType::NetworkInput(input) => {
                         // Received message
-                        let message = Message::deserialize(&_input);
+                        let message = Message::deserialize(&input);
                         info!("Received {:?} message from {}...", &message.kind, &message.sender_name);
 
                         match &message.kind {
                             MessageKind::AppBlockResponse => {
-                                // Only process first response to an outstanding request
-                                // response is assumed to have the same tag as the request...
-                                // TODO: do something more clever?
+                                // For proof-of-concept: only process first response to an outstanding request with matching tag.
                                 if self.outstanding_requests.contains(&message.tag) {
                                     // Process received block
                                     if let MessagePayload::SocketAddr(addr) = message.payload {
-                                        let mut stream = TcpStream::connect(addr).expect("Couldn't connect to streamlet instance");
-                                        
-                                        // Request a chain
-                                        if let Err(e) = stream.write(&String::from("block").into_bytes()) {
-                                            info!("Failed to request block");   
-                                        } else {
-                                            // Close write stream
-                                            stream.shutdown(Shutdown::Write).expect("Failed to close write stream");
-
-                                            // Read the incoming data
-                                            let mut msg = Vec::new();
-                                            stream.read_to_end(&mut msg).unwrap();
-                                            let SignedBlock { block, signatures} = deserialize(&msg).expect("Failed to deserialize block");
-
-                                            // Close read stream, gives error on macOS... https://doc.rust-lang.org/std/net/struct.TcpStream.html#method.shutdown
-                                            stream.shutdown(Shutdown::Read);
-
-                                            // Handle case of block being genesis
-                                            if block.epoch == 0 {
-                                                info!("Recieved genesis block from {} with tag {}", &message.sender_name, message.tag);
-                                            } else {
-                                                let directory: OnionRouterNetDirectory =
-                                                    deserialize(&block.data[..]).expect("Issues unwrapping directory data...");
-                                                info!("Recieved directory data: {} from {}, with epoch {}, tag: {}, and signatures {:?}", directory, &message.sender_name, block.epoch, message.tag, &signatures);
-                                            }
-                                        }
+                                        self.request_block(&addr, &message);
                                     } else {
                                         debug!("Unkown payload for MessageKind::AppBlockResponse");
                                     }
-                                    
                                     // Remove corresponding tag from outstanding requests
                                     self.outstanding_requests.remove(&message.tag);
                                 }
                             }
                             MessageKind::AppChainResponse => {
-                                // Only process first response to an outstanding request
-                                // response is assumed to have the same tag as the request...
-                                // TODO: do something more clever?
+                                // Again, for proof of concept: accept first chain 
                                 if self.outstanding_requests.contains(&message.tag) {
-                                    // Process received block
                                     if let MessagePayload::SocketAddr(addr) = message.payload {
-                                        let mut stream = TcpStream::connect(addr).expect("Couldn't connect to streamlet instance");
-                                        
-                                        // Request a chain
-                                        if let Err(e) = stream.write(&String::from("chain").into_bytes()) {
-                                            info!("Failed to request chain");   
-                                        } else {
-                                            // Close write stream
-                                            stream.shutdown(Shutdown::Write).expect("Failed to close write stream");
-
-                                            // Read the incoming data
-                                            let mut msg = Vec::new();
-                                            stream.read_to_end(&mut msg).unwrap();
-                                            let chain: LocalChain = deserialize(&msg).expect("Failed to deserialize blockchain");
-                                            info!("Recieved chain: {} from {} with tag {}", chain, &message.sender_name, message.tag);
-
-                                            // Close read stream, gives error on macOS... https://doc.rust-lang.org/std/net/struct.TcpStream.html#method.shutdown
-                                            stream.shutdown(Shutdown::Read);
-                                        }
+                                        self.request_chain(&addr, &message);
+                                        // Remove corresponding tag from outstanding requests
+                                        self.outstanding_requests.remove(&message.tag);
                                     } else {
                                         debug!("Unknown payload for MessageKind::AppChainResponse");
                                     }
-                                    
-                                    // Remove corresponding tag from outstanding requests
-                                    self.outstanding_requests.remove(&message.tag);
                                 }
                             }
                             _ => {
@@ -348,9 +299,69 @@ impl Application {
             MessageKind::AppChainRequest,
             self.curr_nonce,
             APP_SENDER_ID,
-            "app".to_string(),
+            APP_NAME.to_string(),
         );
         return msg;
+    }
+
+    /* Request a block, presumed to be either the genesis block or an OnionRouterNetDirectory.
+     */
+    fn request_block(&mut self, addr: &SocketAddr, message: &Message) {
+        let mut stream = TcpStream::connect(addr).expect("Couldn't connect to streamlet instance");
+
+        // Request a block
+        if let Err(e) = stream.write(&String::from("block").into_bytes()) {
+            error!("Failed to request block: {:?}", e);   
+        } else {
+            // Close write stream
+            stream.shutdown(Shutdown::Write).expect("Failed to close write stream");
+
+            // Read the incoming data
+            let mut msg = Vec::new();
+            stream.read_to_end(&mut msg).unwrap();
+            let SignedBlock { block, signatures} = deserialize(&msg).expect("Failed to deserialize block");
+
+            // Close read stream
+            if let Err(_) = stream.shutdown(Shutdown::Read) {
+                // Note: gives error on macOS... https://doc.rust-lang.org/std/net/struct.TcpStream.html#method.shutdown
+                debug!("Error shutting down TCP stream in application (normal on MacOS)");
+            }
+
+            
+            if block.epoch == 0 { // Handle case of block being genesis
+                info!("Recieved genesis block from {} with tag {}", &message.sender_name, message.tag);
+            } else {
+                let directory: OnionRouterNetDirectory =
+                    deserialize(&block.data[..]).expect("Issues unwrapping directory data...");
+                info!("Recieved directory data: {} from {}, with epoch {}, tag: {}, and signatures {:?}", directory, &message.sender_name, block.epoch, message.tag, &signatures);
+            }
+        }
+    }
+
+    fn request_chain(&mut self, addr: &SocketAddr, message: &Message) {
+        // Process received block
+    
+        let mut stream = TcpStream::connect(addr).expect("Couldn't connect to streamlet instance");
+        
+        // Request a chain
+        if let Err(e) = stream.write(&String::from("chain").into_bytes()) {
+            error!("Failed to request chain: {:?}", e);   
+        } else {
+            // Close write stream
+            stream.shutdown(Shutdown::Write).expect("Failed to close write stream");
+
+            // Read the incoming data
+            let mut msg = Vec::new();
+            stream.read_to_end(&mut msg).unwrap();
+            let chain: LocalChain = deserialize(&msg).expect("Failed to deserialize blockchain");
+            info!("Recieved chain: {} from {} with tag {}", chain, &message.sender_name, message.tag);
+
+            // Close read stream
+            if let Err(_e) = stream.shutdown(Shutdown::Read) {
+                // Note: gives error on macOS... https://doc.rust-lang.org/std/net/struct.TcpStream.html#method.shutdown
+                debug!("Error shutting down TCP stream in application (normal on MacOS)");
+            }
+        }
     }
 
     // TODO, potentially optional: two-way validation

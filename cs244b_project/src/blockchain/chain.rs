@@ -10,7 +10,6 @@ use std::fmt;
 pub trait Chain {
     fn new() -> Self;
     fn append_block(&mut self, block: Block, signatures: Vec<Signature>);
-    fn fetch_block(&self, id: u64) -> Block;
     fn validate_block(block: &Block, parent_block: &Block) -> bool;
     fn finalize_block();
     fn head(&self) -> (&Block, &Vec<Signature>);
@@ -54,9 +53,6 @@ impl Chain for LocalChain {
     fn append_block(&mut self, block: Block, signatures: Vec<Signature>) {
         let signed_block = SignedBlock { block, signatures };
         self.blocks.push(signed_block);
-    }
-    fn fetch_block(&self, id: u64) -> Block {
-        todo!()
     }
     fn validate_block(block: &Block, parent_block: &Block) -> bool {
         return if block.parent_hash != parent_block.hash {

@@ -11,13 +11,13 @@ use std::collections::{hash_map::DefaultHasher, HashMap, VecDeque};
 use std::hash::Hasher;
 use tokio::sync::{Mutex};
 use std::sync::Arc;
-use bincode::{deserialize, serialize};
+use bincode::{serialize};
 
 use log::{debug, info, warn};
 use std::time::Duration;
 use tokio::{
     io::{stdin, AsyncBufReadExt, BufReader},
-    select, spawn,
+    select, 
     sync::{mpsc, watch},
     time::sleep,
 };
@@ -116,7 +116,7 @@ impl StreamletInstance {
 
         // Accept create channels for streamlet instance to send / receive messages from the TCP thread
         let (tcp_connect_trigger, mut tcp_connect_recv) = watch::channel("tcp_conenct");
-        let (tcp_data_sender, mut tcp_data_receiver) = mpsc::unbounded_channel();
+        let (tcp_data_sender, tcp_data_receiver) = mpsc::unbounded_channel();
 
         // Spawn thread to listen for TCP requests
         tokio::spawn(async move {
@@ -131,9 +131,9 @@ impl StreamletInstance {
         let (timer_trigger, mut timer_recv) = watch::channel("timer_init");
         let (epoch_trigger, mut epoch_recv) = watch::channel("epoch_trigger");
 
-        let mut current_epoch_handle_timer = current_epoch_handle.clone();
+        let current_epoch_handle_timer = current_epoch_handle.clone();
         // Epoch timer thread
-        let mut vote_this_epoch_handle_timer = vote_this_epoch_handle.clone();
+        let vote_this_epoch_handle_timer = vote_this_epoch_handle.clone();
         tokio::spawn(async move {
             // Wait until signaled that peer discovery is done
             let _ = timer_recv.changed().await.is_ok();
@@ -295,7 +295,9 @@ impl StreamletInstance {
                             MessageKind::AppSend => {
                                 match &message.payload {
                                     MessagePayload::AppData(data) => {
-                                        self.pending_transactions.push_back(data.clone());
+                                        if app_interface.message_is_from_app(&message) && app_interface.data_is_valid(&message) {
+                                            self.pending_transactions.push_back(data.clone());
+                                        }
                                     }
                                     _ => {
                                         debug!("Unkown payload for MessageKind::AppSend");
@@ -480,7 +482,7 @@ impl StreamletInstance {
      @param message: the message instance with a payload to be signed */
     fn sign_message(&self, message: &mut Message) -> Option<Signature> {
         // Create signature
-        let signature: Signature = self.keypair.sign(message.serialize_payload().as_slice());
+        let signature: Signature = self.sign(message.serialize_payload().as_slice());
         // Make sure we haven't signed already
         for s in message.clone().get_signatures() {
             if signature == s { return None; }
@@ -496,7 +498,7 @@ impl StreamletInstance {
     @param pk: public key to verify against the signature */
     fn verify_signature(&self, message: &Message, signature: &Signature, pk: &PublicKey) -> bool {
         let result = pk.verify(message.serialize_payload().as_slice(), signature);
-        if let Err(error) = result {
+        if let Err(_) = result {
             return false;
         } else {
             return true;
