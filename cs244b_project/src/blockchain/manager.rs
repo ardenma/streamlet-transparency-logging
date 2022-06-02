@@ -12,6 +12,7 @@ pub struct BlockchainManager {
     notarized_chains: Vec<LocalChain>, // i *think* we only track a certain number of these... not sure how to determine this exactly
                                        // longest_notarized_chain: LocalChain,
                                        // unconfirmed_pending_transactions: String, // we should formulate some actual Transaction struct but I'm not sure what that looks like
+    pub num_finalizations: u64,  // counter
 }
 
 impl BlockchainManager {
@@ -25,6 +26,7 @@ impl BlockchainManager {
             finalized_chain: LocalChain::new(),
             longest_notarized_chain_length: 1,
             notarized_chains: Vec::from([LocalChain::new()]),
+            num_finalizations: 0,
         }
     }
 
@@ -137,7 +139,7 @@ impl BlockchainManager {
                 "\n\nSuccessfully finalized chain, new finalized chain {}\n",
                 self.finalized_chain
             );
-
+            self.num_finalizations += 1;
         }
     }
 

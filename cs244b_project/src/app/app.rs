@@ -17,6 +17,7 @@ use rand::distributions::Alphanumeric;
 use std::collections::HashSet;
 use std::fmt;
 use std::io::{Read, Write};
+use std::mem::{size_of_val, size_of};
 use tokio::{
     io::{stdin, AsyncBufReadExt, BufReader},
     select,
@@ -103,11 +104,15 @@ impl OnionRouterNetDirectory {
     const MIN_SIZE: usize = 2;
     const MAX_SIZE: usize = 20;
 
-    pub fn new() -> Self {
-        let num_entries = rand::thread_rng().gen_range(
-            OnionRouterNetDirectory::MIN_SIZE,
-            OnionRouterNetDirectory::MAX_SIZE,
-        );
+    pub fn new(_num_entries: i32) -> Self {
+        let num_entries = if _num_entries == -1 {
+            rand::thread_rng().gen_range(
+                OnionRouterNetDirectory::MIN_SIZE,
+                OnionRouterNetDirectory::MAX_SIZE,
+            ) 
+        } else {
+            _num_entries as usize
+        };
         let mut s = Self {
             or_list: Vec::new(),
         };
@@ -199,9 +204,27 @@ impl Application {
                             net_stack.broadcast_message(
                                 serialize(&msg).expect("Can't serialize msg from app!"),
                             );
+                        } else if _line.starts_with("a") {
+                            // Otherwise: create a new directory
+                            let msg = self.make_test_data(1);
+                            net_stack.broadcast_message(
+                                serialize(&msg).expect("Can't serialize msg from app!"),
+                            );
+                        } else if _line.starts_with("s") {
+                            // Otherwise: create a new directory
+                            let msg = self.make_test_data(1000);
+                            net_stack.broadcast_message(
+                                serialize(&msg).expect("Can't serialize msg from app!"),
+                            );
+                        } else if _line.starts_with("d") {
+                            // Otherwise: create a new directory
+                            let msg = self.make_test_data(10000);
+                            net_stack.broadcast_message(
+                                serialize(&msg).expect("Can't serialize msg from app!"),
+                            );
                         } else {
                             // Otherwise: create a new directory
-                            let msg = self.make_data();
+                            let msg = self.make_data(-1);
                             net_stack.broadcast_message(
                                 serialize(&msg).expect("Can't serialize msg from app!"),
                             );
@@ -249,11 +272,29 @@ impl Application {
         }
     }
 
-    fn make_data(&mut self) -> Message {
-        let dir = OnionRouterNetDirectory::new();
-        info!("Sending dir to Streamlet: {}", dir);
+    fn make_data(&mut self, num_entries: i32) -> Message {
+        let dir = OnionRouterNetDirectory::new(num_entries);
+        info!("Sending dir to Streamlet: \n{}\nTotal size of directory ({} entries): {}B", dir, dir.or_list.len(), size_of::<OnionRouterBasicData>() * dir.or_list.len());
         let data =
             serialize(&dir).expect("Can't serialize a directory!");
+        let sig = self.keypair.sign(&data);
+        self.curr_nonce += 1;
+
+
+        let mut msg = Message::new_with_defined_nonce(
+            MessagePayload::AppData(data),
+            MessageKind::AppSend,
+            self.curr_nonce,
+            APP_SENDER_ID,
+            "app".to_string(),
+        );
+        msg.sign_message(sig);
+        return msg;
+    }
+
+    fn make_test_data(&mut self, size: usize) -> Message {
+        let data: Vec<u8> = (0..size).map(|_| { rand::random::<u8>() }).collect();
+        info!("Sending random bytestring of size {}B to Streamlet", size_of::<u8>() * data.len());
         let sig = self.keypair.sign(&data);
         self.curr_nonce += 1;
 
@@ -363,7 +404,7 @@ mod tests {
 
     #[test]
     fn test_app_serialization() {
-        let dir = OnionRouterNetDirectory::new();
+        let dir = OnionRouterNetDirectory::new(-1);
         let bytes = serialize(&dir).expect("Can't serialize directory");
         let dir2: OnionRouterNetDirectory =
             deserialize(&bytes[..]).expect("Can't deserialize directory");
