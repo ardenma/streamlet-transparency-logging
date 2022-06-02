@@ -8,6 +8,8 @@ use itertools::Itertools;
 use rand::Rng;
 use tokio::io::{AsyncWriteExt, AsyncReadExt};
 use std::collections::{hash_map::DefaultHasher, HashMap, VecDeque};
+use std::fs::File;
+use std::io::Write;
 use std::hash::Hasher;
 use tokio::sync::{Mutex};
 use std::sync::Arc;
@@ -35,7 +37,9 @@ pub use utils::crypto::*;
 pub struct StreamletInstance {
     pub id: u32,
     pub name: String,
+    mode: OperationMode,
     expected_peer_count: usize,
+    epoch_length: u64,
     blockchain_manager: BlockchainManager,
     pending_transactions: VecDeque<Vec<u8>>,
     keypair: Keypair,
@@ -49,12 +53,25 @@ enum EventType {
     EpochStart,
     TCPRequestBlock,
     TCPRequestChain,
+    PeerInit,
+}
+
+#[derive(PartialEq)]
+pub enum OperationMode {
+    Normal,
+    Benchmark,
+}
+pub enum BenchmarkDataType {
+    Small,
+    Medium,
+    Large,
 }
 
 // Toggle based on number of nodes. 
 // Should be higher for more nodes s.t. time for finalization. 
-const EPOCH_LENGTH_S: u64 = 10;
+// const EPOCH_LENGTH_S: u64 = 10;
 const EPOCH_DELAY_MS: u64 = 100;
+const NUM_TEST_EPOCHS: u64 = 5;
 
 // ==========================
 // === Core Streamlet API ===
@@ -66,7 +83,7 @@ impl StreamletInstance {
     /* Initializer:
     @param my_name: identifying "name" of this node
     @param expected_peer_count: expected number of StreamletInstances running */
-    pub fn new(name: String, expected_peer_count: usize) -> Self {
+    pub fn new(name: String, expected_peer_count: usize, epoch_length: u64, mode: OperationMode) -> Self {
         // Setup public/private key pair and id
         let mut csprng = OsRng {};
         let keypair: Keypair = Keypair::generate(&mut csprng);
@@ -76,7 +93,9 @@ impl StreamletInstance {
         // Build the streamlet instance
         Self {
             id: 0,
+            mode: mode,
             expected_peer_count: expected_peer_count,
+            epoch_length: epoch_length,
             name: name.clone(),
             blockchain_manager: BlockchainManager::new(),
             pending_transactions: VecDeque::new(),
@@ -90,10 +109,10 @@ impl StreamletInstance {
     1. Intializes networking stack + input channels (e.g. stdin)
     2. Performs peer discovery
     3. Runs the main event loop */
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self, data_type: BenchmarkDataType) {
 
-        // Share the epoch data here
-        let current_epoch_handle = Arc::new(Mutex::new(1));
+        // Share the epoch data here, if we start on 0 the first block gets proposed in 1
+        let current_epoch_handle = Arc::new(Mutex::new(0));
         // If we've voted in the current epoch, store our "vote" (signature) here
         let vote_this_epoch_handle = Arc::new(Mutex::new(None));
         // Initialize
@@ -134,13 +153,14 @@ impl StreamletInstance {
         let mut current_epoch_handle_timer = current_epoch_handle.clone();
         // Epoch timer thread
         let mut vote_this_epoch_handle_timer = vote_this_epoch_handle.clone();
+        let epoch_length_s = self.epoch_length;
         tokio::spawn(async move {
             // Wait until signaled that peer discovery is done
             let _ = timer_recv.changed().await.is_ok();
 
             // Epoch timer loop
             loop {
-                sleep(Duration::from_secs(EPOCH_LENGTH_S)).await;
+                sleep(Duration::from_secs(epoch_length_s)).await;
                 let mut current_epoch = current_epoch_handle_timer.lock().await;
                 *current_epoch = *current_epoch + 1;
                 drop(current_epoch);
@@ -153,6 +173,20 @@ impl StreamletInstance {
         });
 
         let app_interface = AppInterface::new(&mut net_stack);
+        
+        // Hacky code for starting peer init for benchmarking
+        let (trigger_init, mut recv_init) = mpsc::channel(1);
+        let mut needs_init = true;
+        if self.mode == OperationMode::Benchmark {
+            // Fill pending transactions
+            self.fill_pending_transactions(NUM_TEST_EPOCHS + 10, &data_type);
+
+            // Spawn thread to trigger peer init
+            tokio::spawn(async move {
+                sleep(Duration::from_secs(2)).await;
+                trigger_init.send(0).await.expect("can't send init event");
+            });
+        }
 
         // Main event loop!
         loop {
@@ -174,6 +208,17 @@ impl StreamletInstance {
                         Some(EventType::EpochStart)
                     }
 
+                    // One way to model starting peer init (only for benchmark mode)
+                    _tick = recv_init.recv() => {
+                        recv_init.close();
+                         if needs_init {
+                             needs_init = false;
+                             Some(EventType::PeerInit)
+                         } else {
+                             None
+                         }
+                    }
+                    
                     // Needs to be polled in order to make progress.
                     _ = net_stack.clear_unhandled_event() => {
                         None
@@ -221,12 +266,38 @@ impl StreamletInstance {
                         debug!("Sending block {:?} to TCP thread", signed_block);
                         tcp_data_sender.send(serialize(&signed_block).expect("Failed to serialize block")).expect("Failed to send block..");
                     }
+                    EventType::PeerInit => {
+                        peers.advertise_self(&mut net_stack);
+                    }
                     EventType::EpochStart => {
 
                         // Want to hold locks for as little time as possible s.t. timer doesn't get out of sync
                         let current_epoch_ref = current_epoch_handle.lock().await;
                         let epoch = *current_epoch_ref;
                         drop(current_epoch_ref);
+
+                        if self.mode == OperationMode::Benchmark {
+                            if epoch == NUM_TEST_EPOCHS + 1 {  // +1 so that the final epoch completes
+                                let num_finalizations = self.blockchain_manager.num_finalizations;
+                                let finalization_percentage = ((self.blockchain_manager.finalized_chain_length - 1) as f64) / (NUM_TEST_EPOCHS as usize - 1) as f64 * 100 as f64;
+
+                                info!("Number of finalizations {}/{}", num_finalizations, NUM_TEST_EPOCHS - 1);
+                                info!("Finalization percentage {}%", finalization_percentage);
+
+                                let num_nodes = self.expected_peer_count + 1;
+                                let data_type_str = match data_type {
+                                    BenchmarkDataType::Small => "small",
+                                    BenchmarkDataType::Medium => "medium",
+                                    BenchmarkDataType::Large => "large",
+                                };
+
+                                let mut f = File::options().append(true).create(true).open(format!("./logs/{}.log", self.name)).expect("Unable to open file");
+                                if let Err(e) = writeln!(f, "{},{},{},{},{}", num_nodes, epoch_length_s, data_type_str, num_finalizations, finalization_percentage) {
+                                    eprintln!("Couldn't write to file: {}", e);
+                                }
+                                return;
+                            }
+                        }
 
                         let leader = self.get_epoch_leader(epoch);
                         
@@ -593,10 +664,21 @@ impl StreamletInstance {
         return &self.sorted_peer_names[leader_index];
     }
     /* Determines epoch leader using deterministic hash function.
-    @param epoch: epoch number
     Note: for testing, should be taken care of in peer discovery. */
     pub fn add_public_key(&mut self, instance_name: String, pk: &PublicKey) {
         self.public_keys.insert(instance_name, pk.clone()); // TODO catch errors with insertion?
+    }
+
+    fn fill_pending_transactions(&mut self, num_elements: u64, data_type: &BenchmarkDataType) {
+        let size = match data_type {
+            BenchmarkDataType::Small => 1,
+            BenchmarkDataType::Medium => 1000,
+            BenchmarkDataType::Large => 10000
+        };
+        for _ in 0..num_elements {
+            let data: Vec<u8> = (0..size).map(|_| { rand::random::<u8>() }).collect();
+            self.pending_transactions.push_back(data);
+        }
     }
 }
 
@@ -610,7 +692,7 @@ mod tests {
 
     #[test]
     fn test_streamlet_signatures() {
-        let streamlet = StreamletInstance::new(String::from("Test"), 1);
+        let streamlet = StreamletInstance::new(String::from("Test"), 1, 3, OperationMode::Normal);
         // Testing signatures
         let message: &[u8] = b"This is a test of the tsunami alert system.";
         let signature: Signature = streamlet.sign(message);
@@ -620,9 +702,9 @@ mod tests {
 
     #[test]
     fn test_streamlet_msg_signatures() {
-        let mut streamlet1 = StreamletInstance::new(String::from("Test1"), 3);
-        let streamlet2 = StreamletInstance::new(String::from("Test2"), 3);
-        let streamlet3 = StreamletInstance::new(String::from("Test3"), 3);
+        let mut streamlet1 = StreamletInstance::new(String::from("Test1"), 3, 3, OperationMode::Normal);
+        let streamlet2 = StreamletInstance::new(String::from("Test2"), 3, 3, OperationMode::Normal);
+        let streamlet3 = StreamletInstance::new(String::from("Test3"), 3, 3, OperationMode::Normal);
 
         // Create random hash
         let mut hasher = Sha256::new();
