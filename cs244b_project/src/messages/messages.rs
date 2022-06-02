@@ -67,7 +67,7 @@ impl Message {
         return decoded;
     }
     // Access functions for message signatures to avoid storing entire Siganture vector copies
-    pub fn get_signatures(self) -> Vec<Signature> { self.signatures } 
+    pub fn get_signatures(&self) -> &Vec<Signature> { &self.signatures } 
     pub fn sign_message(&mut self, signature: Signature) {
         self.signatures.push(signature)
     }
