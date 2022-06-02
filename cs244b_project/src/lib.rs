@@ -332,7 +332,7 @@ impl StreamletInstance {
                         let vote_this_epoch = *vote_this_epoch_ref;
                         drop(vote_this_epoch_ref);
 
-                        info!("Epoch: {}, Received {:?} message...", epoch, &message.kind);
+                        debug!("Epoch: {}, Received {:?} message...", epoch, &message.kind);
                     
                         // Message processing logic
                         match &message.kind {
@@ -340,6 +340,7 @@ impl StreamletInstance {
                             MessageKind::AppSend => {
                                 match &message.payload {
                                     MessagePayload::AppData(data) => {
+                                        info!("Epoch: {}, received message from app; adding to pending transactions", epoch);
                                         if app_interface.message_is_from_app(&message) && app_interface.data_is_valid(&message) {
                                             self.pending_transactions.push_back(data.clone());
                                         }
@@ -379,8 +380,8 @@ impl StreamletInstance {
                                 net_stack.broadcast_to_topic("app", new_message.serialize());
                             },
                             // Message only for application (we just ignore)
-                            MessageKind::AppBlockResponse => { /* Do nothing? */ },
-                            MessageKind::AppChainResponse => { /* Do nothing? */ },
+                            MessageKind::AppBlockResponse => { /* Do nothing */ },
+                            MessageKind::AppChainResponse => { /* Do nothing */ },
                             // Peer advertisement logic
                             MessageKind::PeerInit => {
                                 if let MessagePayload::PeerAdvertisement(ad) = &message.payload {
@@ -418,7 +419,7 @@ impl StreamletInstance {
                                             if self.compromise_type != CompromiseType::NoVote {
                                                 // Broadcast messages that we haven't signed yet
                                                 // Note: this is an inexact, but reasonable, proxy for echoing
-                                                info!("Epoch {}: VOTED and signed message {}; broadcasting", epoch, message.nonce);
+                                                info!("Epoch {}: NEW and VALID message {}; broadcasting", epoch, message.nonce);
                                                 net_stack.broadcast_message(new_message.serialize());
                                                 // Update -- we just voted!
                                                 let mut vote_this_epoch_ref = vote_this_epoch_handle.lock().await;
@@ -457,7 +458,7 @@ impl StreamletInstance {
                                     if let Some(sig) = signature {
                                         if self.compromise_type != CompromiseType::NoVote {
                                             // Sign and broadcast
-                                            info!("Epoch: {}, (Propose) received PROPOSE, signing and broadcasting message {}...",epoch, message.nonce);
+                                            info!("Epoch: {}, (Propose) received valid PROPOSE, signing and broadcasting message {}...",epoch, message.nonce);
                                             new_message.kind = MessageKind::Vote;
                                             net_stack.broadcast_message(new_message.serialize());
                                             // If an epoch has passed since we locked the mutex, then we may miss an epoch of voting.
@@ -525,7 +526,6 @@ impl StreamletInstance {
         // Create signature
         let signature: Signature = self.sign(message.serialize_payload().as_slice());
         // Make sure we haven't signed already
-        // right now we only try to prevent duplicate sigs but don't check for them... may want a fail-case related to this
         for s in message.clone().get_signatures() {
             if signature == s { return None; }
         }
@@ -553,12 +553,15 @@ impl StreamletInstance {
         let mut num_valid_signatures = 0;
         let signatures = message.clone().get_signatures(); // Check all signatures
 
-        // Check all sigatures on the message
+        // Check all sigatures on the message; prevent double-signing
+        let mut seen = std::collections::HashSet::new();
         for signature in signatures.iter() {
             // Check against all known pk's
-            for pk in self.public_keys.values() {
-                if self.verify_signature(message, signature, pk) {
+            for name in self.public_keys.keys() {
+                let pk = self.public_keys[name];
+                if !seen.contains(name) && self.verify_signature(message, signature, &pk) {
                     num_valid_signatures += 1;
+                    seen.insert(name);
                     break;
                 }
             }

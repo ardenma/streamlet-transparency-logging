@@ -56,12 +56,17 @@ impl BlockchainManager {
 
     pub fn index_of_ancestor_chain(&mut self, new_block: Block) -> Option<usize> {
         let mut chain_idx = 0;
+        let mut found = None; 
         for chain in self.notarized_chains.iter_mut() {
+            if chain.length() < self.longest_notarized_chain_length { continue; }
             let (block, _) = chain.head();
-            if block.hash == new_block.parent_hash { break; }
+            if block.hash == new_block.parent_hash { 
+                found = Some(chain_idx);
+                break; 
+            }
             chain_idx += 1;
         }
-        return Some(chain_idx);
+        return found;
     }
 
     /* Tries to adds block to a notarized chain and tries to finalize the chain
