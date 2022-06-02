@@ -87,7 +87,7 @@ impl Peers {
 
         if self.is_done() && net_stack.init_channel_open() {
             info!(
-                "{} is done with peer discovery protocol; discovered {} peer(s)",
+                "{} is done with initialization; has {} peer(s); starting epoch timer",
                 self.node_name,
                 self.peer_list.len()
             );
