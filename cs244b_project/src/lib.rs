@@ -556,6 +556,9 @@ impl StreamletInstance {
         let sig = self.sign_message(message);
 
         if let Some(signature_value) = sig {
+            // Vote if and only if: 
+            // - We haven't voted before in this epoch
+            // - This is a re-broadcast of our vote in this epoch
             if vote_this_epoch.is_none() || vote_this_epoch.unwrap() == signature_value {
                 return Some(signature_value);
             }
