@@ -56,6 +56,7 @@ pub enum CompromiseType {
     NonLeaderPropose, // Implemented behavior
     EarlyEpoch, // Implemented behavior
     LateEpoch, // Implemented behavior
+    BadBlocks,
     NoCompromise,
 }
 impl CompromiseType {
@@ -323,7 +324,7 @@ impl StreamletInstance {
                                 .unwrap()
                                     - 1;
                                 let (parent, _) = self.blockchain_manager.head();
-                                let parent_hash = parent.hash.clone();
+                                let mut parent_hash = parent.hash.clone();
                                 let proposed_block = Block::new(
                                     {
                                         if self.compromise_type == CompromiseType::EarlyEpoch { 0 }
