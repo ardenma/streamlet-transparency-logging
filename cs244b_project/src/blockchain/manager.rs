@@ -1,7 +1,9 @@
 use crate::blockchain::*;
 use log::info;
 use std::fs;
-use std::fs::File;
+use std::fs::OpenOptions;
+use std::env;
+use std::io::{Read, Write};
 
 // Struct for managing multiple notarized chains and a finalied chain.
 // Provides the abstraction of a single Chain the user can query/manipulate
@@ -145,7 +147,17 @@ impl BlockchainManager {
         fs::write(local_file_path, serde_json::to_string_pretty(&self.fetch_local_finalized_chain()).unwrap()).expect("failed to write to file!");
     }
     pub fn publish_last_finalized_block(&self) {
-        todo!("on its way!")
+        info!("publishing most recent finalized block to public chain");
+        // Hard-coding the public path here but if we want to get fancy with it we could have this be determined by the app or have it be specifiable. Just trying to make checking easy
+        let public_path = format!("{}/src/tmp/{}.txt", env::current_dir().expect("invalid current directory").display().to_string(), "pub");
+        let mut file = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(public_path)
+            .unwrap();
+        let latest_finalized_block_msg = serde_json::to_string_pretty(&self.get_latest_finalized_block()).unwrap();
+        file.write_all(latest_finalized_block_msg.as_bytes()).unwrap();
+        
     }
 
     /* Returns the most recent notarized block on one of the longest notarized

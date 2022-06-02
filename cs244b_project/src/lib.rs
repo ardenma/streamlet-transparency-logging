@@ -42,6 +42,7 @@ pub struct StreamletInstance {
     keypair: Keypair,
     public_keys: HashMap<String, PublicKey>,
     sorted_peer_names: Vec<String>,
+    epoch_of_last_published_block: u64,
 }
 
 enum EventType {
@@ -54,6 +55,7 @@ enum EventType {
 
 const EPOCH_LENGTH_S: u64 = 5;
 const EPOCH_DELAY_MS: u64 = 100;
+const PUBLISH_RATE: u64 =  10;
 
 // ==========================
 // === Core Streamlet API ===
@@ -82,6 +84,7 @@ impl StreamletInstance {
             keypair: keypair,
             public_keys: HashMap::from([(name.clone(), pk)]),
             sorted_peer_names: Vec::new(),
+            epoch_of_last_published_block: 0,
         }
     }
 
@@ -230,16 +233,31 @@ impl StreamletInstance {
 
                         // If I am the current leader, propose a block
                         if leader == &self.name {
-                            self.blockchain_manager.export_local_finalized_chain_to_file(format!("{}/src/tmp/{}.txt", env::current_dir().expect("invalid current directory").display().to_string(), self.name));
                             info!("I'm the leader");
+
+                            if epoch % PUBLISH_RATE == 0 {
+                                // Avoid duplicate publishing the best we can without reading back the file for the last pushed epoch.
+                                // In reality, pushing duplicate blocks to an actual public chain wouldn't be that bad but ideally no node should
+                                // be missing 10 epochs worth of this stuff anyway and still be considered okay to push...
+                                // If we want a solution that better guarantees in-order publication I can try to work something out just most of the options
+                                // seem to either rely on something inefficient or additional messages being sent which could also be missed. 
+                                // Epoch data is attached to eached finalized block published so a user could still discern order. 
+                                let latest_finalized_epoch = self.blockchain_manager.get_latest_finalized_block().0.epoch;
+                                if latest_finalized_epoch != self.epoch_of_last_published_block {
+                                    self.epoch_of_last_published_block = latest_finalized_epoch;
+                                    info!("{} is publishing latest finalized block to public chain at epoch {}", self.name, epoch);
+                                    self.blockchain_manager.publish_last_finalized_block();
+                                }
+                                self.blockchain_manager.export_local_finalized_chain_to_file(format!("{}/src/tmp/{}.txt", env::current_dir().expect("invalid current directory").display().to_string(), self.name));
+                            }
+                            
                             if let Some(data) = self.pending_transactions.pop_front() {
                                 sleep(Duration::from_millis(EPOCH_DELAY_MS)).await;
-                                // Cretae message contents
+                                // Create message contents
                                 let height = u64::try_from(
                                     self.blockchain_manager.longest_notarized_chain_length,
                                 )
-                                .unwrap()
-                                    - 1;
+                                .unwrap();
                                 let (parent, _) = self.blockchain_manager.head();
                                 let parent_hash = parent.hash.clone();
                                 let proposed_block = Block::new(
