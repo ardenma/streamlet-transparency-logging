@@ -49,47 +49,11 @@ pub struct StreamletInstance {
 pub enum CompromiseType {
     WrongParentHash, // Implemented behavior
     NoPropose, // Implemented behavior
-    MultiVote, // Waiting for finalized voting & notarization logic
     NoVote, // Implemented behavior
-    BadPublish, // May not make sense to implement; not sure what checks we even want for this; trivial to catch.
-    TargettedMessages, // I don't think this sort of maliciousness makes sense to ever happen / is a reasonable use-case but maybe a nice-to-have
     NonLeaderPropose, // Implemented behavior
     EarlyEpoch, // Implemented behavior
     LateEpoch, // Implemented behavior
-    BadBlocks,
     NoCompromise,
-}
-impl CompromiseType {
-    pub fn is_non_leader_propose(&self) -> bool {
-        match *self {
-            CompromiseType::NonLeaderPropose => true,
-            _ => false,
-        }
-    }
-    pub fn is_bad_blocks(&self) -> bool {
-        match *self {
-            CompromiseType::WrongParentHash => true,
-            _ => false,
-        }
-    }
-    pub fn is_no_propose(&self) -> bool {
-        match *self {
-            CompromiseType::NoPropose => true,
-            _ => false,
-        }
-    }
-    pub fn is_multi_vote(&self) -> bool {
-        match *self {
-            CompromiseType::MultiVote => true,
-            _ => false,
-        }
-    }
-    pub fn is_no_vote(&self) -> bool {
-        match *self {
-            CompromiseType::NoVote => true,
-            _ => false,
-        }
-    }
 }
 
 enum EventType {
@@ -261,29 +225,24 @@ impl StreamletInstance {
                          *  Inputs to compromise a specific node to test failure behavior
                          *  Obviously, this would not exist in an actual implementation, just for demo-ability 
                          */ 
-                        else if line.starts_with("compromise bad-blocks") || line.starts_with("bb")  {
-                            self.compromise_type = CompromiseType::BadBlocks
+                        else if line.starts_with("compromise early-epoch") || line.starts_with("ee")  {
+                            self.compromise_type = CompromiseType::EarlyEpoch
+                        }
+                        else if line.starts_with("compromise late-epoch") || line.starts_with("le")  {
+                            self.compromise_type = CompromiseType::LateEpoch
                         }
                         else if line.starts_with("compromise no-propose") || line.starts_with("np") {
                             self.compromise_type = CompromiseType::NoPropose
                         }
-                        else if line.starts_with("compromise multi-vote") || line.starts_with("mv") {
-                            self.compromise_type = CompromiseType::MultiVote
+                        else if line.starts_with("compromise wrong-parent-hash") || line.starts_with("wp") {
+                            self.compromise_type = CompromiseType::WrongParentHash
                         }
-                        else if line.starts_with("compromise no-vote") || line.starts_with("nv")  {
+                        else if line.starts_with("compromise no-vote") || line.starts_with("nv") {
                             self.compromise_type = CompromiseType::NoVote
-                        }
-                        else if line.starts_with("compromise bad-publish") || line.starts_with("bp")  {
-                            // todo: this is based on how we implement a publishing check, ideally the thing being pushed to would cover this.
-                            self.compromise_type = CompromiseType::BadPublish
-                        }
-                        else if line.starts_with("compromise targetted-messages") || line.starts_with("tm") {
-                            self.compromise_type = CompromiseType::TargettedMessages
                         }
                         else if line.starts_with("compromise non-leader-propose") || line.starts_with("nlp") {
                             self.compromise_type = CompromiseType::NonLeaderPropose
                         }
-
                     }
                     EventType::TCPRequestChain => {
                         let finalized_chain = self.blockchain_manager.export_local_chain();
