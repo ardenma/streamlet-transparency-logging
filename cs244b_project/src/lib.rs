@@ -249,7 +249,7 @@ impl StreamletInstance {
                         if line.starts_with("init") {
                             peers.advertise_self(&mut net_stack);
                         }
-                        if line.starts_with("end discovery") || line.starts_with("e d") {
+                        if line.starts_with("end init") || line.starts_with("e i") || line.starts_with("end discovery") || line.starts_with("e d") {
                             peers.send_end_init(&mut net_stack);
                         } else if line.starts_with("notarized chains") || line.starts_with("nc") {
                             self.blockchain_manager.print_notarized_chains();
