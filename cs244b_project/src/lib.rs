@@ -93,7 +93,7 @@ impl StreamletInstance {
     pub async fn run(&mut self) {
 
         // Share the epoch data here
-        let current_epoch_handle = Arc::new(Mutex::new(0));
+        let current_epoch_handle = Arc::new(Mutex::new(1));
         // If we've voted in the current epoch, store our "vote" (signature) here
         let vote_this_epoch_handle = Arc::new(Mutex::new(None));
         // Initialize
