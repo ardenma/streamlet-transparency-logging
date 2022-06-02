@@ -84,7 +84,7 @@ pub enum BenchmarkDataType {
 // Should be higher for more nodes s.t. time for finalization. 
 // const EPOCH_LENGTH_S: u64 = 10;
 const EPOCH_DELAY_MS: u64 = 100;
-const NUM_TEST_EPOCHS: u64 = 5;
+const NUM_TEST_EPOCHS: u64 = 20;
 
 // ==========================
 // === Core Streamlet API ===
