@@ -3,7 +3,7 @@ use log::info;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::time::SystemTime;
-use std::{alloc::System, collections::HashMap};
+use std::{collections::HashMap};
 
 use super::NetworkStack;
 use crate::messages::{Message, MessageKind, MessagePayload};
@@ -85,19 +85,19 @@ impl Peers {
             (if empty string, name will be generated from random 32-bit number)
         @param public_key: public key belonging to the owning StreamletInstance
     */
-    pub fn new(mut my_name: String, public_key: PublicKey) -> Self {
+    pub fn new(mut my_name: String, public_key: PublicKey, num_peers: usize) -> Self {
         if my_name == "" {
             let rand: u32 = rand::thread_rng().gen();
             my_name = format!("{}", rand).to_string();
         }
-        info!("Initializing peer with name {}", my_name);
+        info!("Initializing peer with name {}; expecting {} peers", my_name, num_peers);
         Self {
             node_name: my_name,
             node_id: 0,
             public_key: public_key,
             peer_list: HashMap::new(),
-            num_expected: 0,
-            compromise_type: CompromiseType::NoCompromise
+            compromise_type: CompromiseType::NoCompromise,
+            num_expected: num_peers,
         }
     }
 
@@ -105,25 +105,6 @@ impl Peers {
     @param new_node_id: node id chosen based off of peer init process */
     pub fn set_node_id(&mut self, new_node_id: u32) {
         self.node_id = new_node_id;
-    }
-
-    /* Start (or restart) an initialization process from scratch.
-    @param net_stack: network stack containing an initialization channel to send on.
-    @param expected_count: the number of peers we expect to receive during initialization.
-                            NOT including the current node.
-    Note: this can be called again to force a re-initialization. */
-    pub fn start_init(&mut self, net_stack: &mut NetworkStack, expected_count: usize) {
-        if net_stack.init_channel_open() {
-            return;
-        }
-        info!(
-            "{} is starting initialization; adding {} peers",
-            self.node_name, expected_count
-        );
-        self.num_expected = expected_count;
-        self.peer_list = HashMap::new();
-        net_stack.open_init_channel();
-        self.advertise_self(net_stack);
     }
 
     /* Should be triggered whenever a PeerAdvertisement is received from the network.
@@ -142,10 +123,6 @@ impl Peers {
             return InitStatus::Done;
         }
         if self.is_done() || self.peer_list.contains_key(&ad.node_name) {
-            info!(
-                "{} received a duplicate or out-of-scope peer advertisement",
-                self.node_name
-            );
             return InitStatus::Done;
         }
         info!("{} adding peer: {}", self.node_name, ad.node_name);
@@ -224,7 +201,7 @@ impl Peers {
         }
     }
 
-    fn advertise_self(&mut self, net_stack: &mut NetworkStack) {
+    pub fn advertise_self(&mut self, net_stack: &mut NetworkStack) {
         let my_ad = PeerAdvertisement {
             end_init: false,
             node_name: self.node_name.clone(),

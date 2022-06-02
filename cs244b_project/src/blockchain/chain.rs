@@ -1,6 +1,7 @@
 use crate::blockchain::block::{Block, SignedBlock};
 use crate::utils::crypto::*;
 use crate::Sha256Hash;
+use serde::{Serialize, Deserialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
 
@@ -16,7 +17,7 @@ pub trait Chain {
     fn length(&self) -> usize;
     fn copy_up_to_height(&self, height: u64) -> Self;
 }
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalChain {
     pub blocks: Vec<SignedBlock>,
 }
@@ -75,7 +76,8 @@ impl Chain for LocalChain {
     }
     fn copy_up_to_height(&self, height: u64) -> LocalChain {
         // +1 because slice end is exclusive
-        let copy_idx = usize::try_from(height + 1).expect("could not cast u64 to usize");
+        // +1 because height does not include genesis block -- it's distance *from* genesis block
+        let copy_idx = usize::try_from(height + 2).expect("could not cast u64 to usize");
         Self {
             blocks: self.blocks[..copy_idx].to_vec(),
         }

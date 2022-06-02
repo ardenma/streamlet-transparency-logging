@@ -6,8 +6,12 @@ mod utils;
 
 use itertools::Itertools;
 use rand::Rng;
+use tokio::io::{AsyncWriteExt, AsyncReadExt};
 use std::collections::{hash_map::DefaultHasher, HashMap, VecDeque};
 use std::hash::Hasher;
+use tokio::sync::{Mutex};
+use std::sync::Arc;
+use bincode::{deserialize, serialize};
 
 use log::{debug, info, warn};
 use chrono::prelude::*;
@@ -18,9 +22,11 @@ use tokio::{
     sync::{mpsc, watch},
     time::sleep,
 };
+use std::net::SocketAddr;
+use tokio::net::TcpListener;
 
 pub use app::app_interface::*;
-pub use blockchain::{Block, BlockchainManager, Chain, LocalChain};
+pub use blockchain::{Block, BlockchainManager, Chain, LocalChain, SignedBlock};
 pub use messages::{Message, MessageKind, MessagePayload};
 pub use network::peer_init;
 pub use network::peer_init::{PeerAdvertisement, CompromiseType};
@@ -31,8 +37,6 @@ pub struct StreamletInstance {
     pub id: u32,
     pub name: String,
     expected_peer_count: usize,
-    current_epoch: u64,
-    voted_this_epoch: bool,
     blockchain_manager: BlockchainManager,
     pending_transactions: VecDeque<Vec<u8>>,
     keypair: Keypair,
@@ -45,11 +49,13 @@ pub struct StreamletInstance {
 enum EventType {
     UserInput(String),
     NetworkInput(Vec<u8>),
-    DoInit,
     EpochStart,
+    TCPRequestBlock,
+    TCPRequestChain,
 }
 
-const EPOCH_LENGTH_S: u64 = 10;
+const EPOCH_LENGTH_S: u64 = 5;
+const EPOCH_DELAY_MS: u64 = 100;
 
 // ==========================
 // === Core Streamlet API ===
@@ -72,8 +78,6 @@ impl StreamletInstance {
         Self {
             id: 0,
             expected_peer_count: expected_peer_count,
-            current_epoch: 0,
-            voted_this_epoch: false,
             name: name.clone(),
             blockchain_manager: BlockchainManager::new(),
             pending_transactions: VecDeque::new(),
@@ -89,6 +93,10 @@ impl StreamletInstance {
     2. Performs peer discovery
     3. Runs the main event loop */
     pub async fn run(&mut self) {
+
+        // Share the epoch data here
+        let current_epoch_handle = Arc::new(Mutex::new(0));
+        let voted_this_epoch_handle = Arc::new(Mutex::new(false));
         // Initialize
         // (1) message queue for the network to send us data
         // (2) message queue for us to receive data from the network
@@ -100,22 +108,33 @@ impl StreamletInstance {
 
         // Set up stdin
         let mut stdin = BufReader::new(stdin()).lines();
+        
+        // Set up TCP for processing application requests
+        let addr = "127.0.0.1:0".parse::<SocketAddr>().expect("Couldn't get socket addr");
+        let listener = TcpListener::bind(&addr).await.expect("Couldn't create TCP listener");
+        let local_addr = listener.local_addr().expect("Couldn't get local addr");
+        info!("Listening for inbound TCP connection at {}", local_addr);
+
+        // Accept create channels for streamlet instance to send / receive messages from the TCP thread
+        let (tcp_connect_trigger, mut tcp_connect_recv) = watch::channel("tcp_conenct");
+        let (tcp_data_sender, mut tcp_data_receiver) = mpsc::unbounded_channel();
+
+        // Spawn thread to listen for TCP requests
+        tokio::spawn(async move {
+            run_tcp_server(listener, tcp_data_receiver, tcp_connect_trigger).await;
+        });
 
         // Set up what we need to initialize the peer discovery protocol
-        let mut peers = peer_init::Peers::new(self.name.clone(), self.keypair.public);
-        let (trigger_init, mut recv_init) = mpsc::channel(1);
-        let mut needs_init = true;
-        spawn(async move {
-            // trigger after MDNS has had a chance to do its thing
-            sleep(Duration::from_secs(1)).await;
-            trigger_init.send(0).await.expect("can't send init event");
-        });
+        let mut peers = peer_init::Peers::new(self.name.clone(), self.keypair.public, self.expected_peer_count);
+        net_stack.open_init_channel();
 
         // Setup epoch timer channel
         let (timer_trigger, mut timer_recv) = watch::channel("timer_init");
         let (epoch_trigger, mut epoch_recv) = watch::channel("epoch_trigger");
 
+        let mut current_epoch_handle_timer = current_epoch_handle.clone();
         // Epoch timer thread
+        let voted_this_epoch_handle_copy = voted_this_epoch_handle.clone();
         tokio::spawn(async move {
             // Wait until signaled that peer discovery is done
             let _ = timer_recv.changed().await.is_ok();
@@ -123,6 +142,12 @@ impl StreamletInstance {
             // Epoch timer loop
             loop {
                 sleep(Duration::from_secs(EPOCH_LENGTH_S)).await;
+                let mut current_epoch = current_epoch_handle_timer.lock().await;
+                *current_epoch = *current_epoch + 1;
+                drop(current_epoch);
+                let mut voted_this_epoch = voted_this_epoch_handle_copy.lock().await;
+                *voted_this_epoch = false;
+                drop(voted_this_epoch);
                 epoch_trigger.send("tick!").expect("Timer reciever closed?");
             }
         });
@@ -144,17 +169,6 @@ impl StreamletInstance {
                         Some(EventType::NetworkInput(network_response.expect("Response doesn't exist.")))
                     },
 
-                    // One way to model the initialization event
-                    _init = recv_init.recv() => {
-                        recv_init.close();
-                        if needs_init {
-                            needs_init = false;
-                            Some(EventType::DoInit)
-                        } else {
-                            None
-                        }
-                    },
-
                     // One way to model the timer tick
                     _tick = epoch_recv.changed() => {
                         Some(EventType::EpochStart)
@@ -164,6 +178,17 @@ impl StreamletInstance {
                     _ = net_stack.clear_unhandled_event() => {
                         None
                     },
+                    
+                    // One way to model getting a TCP request
+                    _ = tcp_connect_recv.changed() => {
+                        let request_type = *tcp_connect_recv.borrow();
+                        debug!("From TCP thread recieved request type {}", request_type);
+                        match request_type {
+                            "chain" => { Some(EventType::TCPRequestChain) }
+                            "block" => { Some(EventType::TCPRequestBlock) }
+                            _ => { None }
+                        }
+                    }
 
                 }
             };
@@ -171,6 +196,9 @@ impl StreamletInstance {
             if let Some(event) = evt {
                 match event {
                     EventType::UserInput(line) => {
+                        if line.starts_with("init") {
+                            peers.advertise_self(&mut net_stack);
+                        }
                         if line.starts_with("end discovery") || line.starts_with("e d") {
                             peers.send_end_init(&mut net_stack);
                         } else if line.starts_with("notarized chains") || line.starts_with("nc") {
@@ -209,28 +237,47 @@ impl StreamletInstance {
                         }
                         */
                     }
+                    EventType::TCPRequestChain => {
+                        let finalized_chain = self.blockchain_manager.export_local_chain();
+                        debug!("Sending chain {} to TCP thread", finalized_chain);
+                        tcp_data_sender.send(serialize(&finalized_chain).expect("Failed to serialize chain")).expect("Failed to send chain...");
+                    }
+                    EventType::TCPRequestBlock => {
+                        let (latest_finalized_block, signatures) = self.get_latest_finalized_block();
+                        let signed_block = SignedBlock {
+                            block: latest_finalized_block,
+                            signatures: signatures,
+                        };
+                        debug!("Sending block {:?} to TCP thread", signed_block);
+                        tcp_data_sender.send(serialize(&signed_block).expect("Failed to serialize block")).expect("Failed to send block..");
+                    }
                     EventType::EpochStart => {
-                        self.voted_this_epoch = false;
-                        let leader = self.get_epoch_leader();
-                        // debug!("Epoch: {} starting with leader {}...", self.current_epoch, leader);
+
+                        let current_epoch_ref = current_epoch_handle.lock().await;
+                        let epoch = *current_epoch_ref;
+                        drop(current_epoch_ref);
+
+                        let leader = self.get_epoch_leader(epoch);
+                        
+                        info!("Epoch: {} starting with leader {}...", epoch, leader);
 
                         // If I am the current leader, propose a block
                         if leader == &self.name 
-                         // DEMO: Or if I am compromised such that I propose when I'm not leader >:D
+                        // DEMO: Or if I am compromised such that I propose when I'm not leader
                         || self.compromise_type.is_non_leader_propose() 
-                        // DEMO Unless I am compromised such that I never propose even when I'm leader >:D
+                        // DEMO Unless I am compromised such that I never propose even when I'm leader
                         && !self.compromise_type.is_no_propose() {
                             if let Some(data) = self.pending_transactions.pop_front() {
                                 // Create message contents
+                                sleep(Duration::from_millis(EPOCH_DELAY_MS)).await;
                                 let height = u64::try_from(
                                     self.blockchain_manager.longest_notarized_chain_length,
                                 )
-                                .unwrap()
-                                    - 1;
+                                .unwrap();
                                 let (parent, _) = self.blockchain_manager.head();
                                 let parent_hash = parent.hash.clone();
                                 let proposed_block = Block::new(
-                                    self.current_epoch,
+                                    epoch,
                                     parent_hash,
                                     data,
                                     height,
@@ -259,7 +306,7 @@ impl StreamletInstance {
 
                                 // Sign and send mesasage
                                 if self.sign_message(&mut message) {
-                                    info!("Epoch: {}, (Propose) SENDING proposal, broadcasting message {}...", self.current_epoch, message.nonce);
+                                    info!("Epoch: {}, (Propose) SENDING proposal, broadcasting message {}...", epoch, message.nonce);
                                     net_stack.broadcast_message(message.serialize());
                                 } else {
                                     debug!("something weird happened...")
@@ -272,7 +319,10 @@ impl StreamletInstance {
                     EventType::NetworkInput(bytes) => {
                         // Received message
                         let message = Message::deserialize(&bytes);
-                        info!("Epoch: {}, Received {:?} message...", self.current_epoch, &message.kind);
+                        let current_epoch_ref = current_epoch_handle.lock().await;
+                        let epoch = *current_epoch_ref;
+                        drop(current_epoch_ref);
+                        info!("Epoch: {}, Received {:?} message...", epoch, &message.kind);
                     
 
                         // Message processing logic
@@ -288,25 +338,38 @@ impl StreamletInstance {
                                     }
                                 };
                             },
-                            // Fulfill application request for data
+                            // Fulfill application request for data (ask the app to create a TCP connection for transport)
                             MessageKind::AppBlockRequest => {
-                                let (latest_finalized_block, signatures) =
-                                    self.get_latest_finalized_block();
-
                                 // Construct message
-                                let new_message = Message::new(
-                                    MessagePayload::Block(latest_finalized_block),
+                                let new_message = Message::new_with_defined_tag(
+                                    MessagePayload::SocketAddr(local_addr),
                                     MessageKind::AppBlockResponse,
+                                    message.tag,
                                     self.id,
                                     self.name.clone(),
                                 );
 
                                 // TOOD: just send to the application instead of bcast?
-                                info!("Epoch: {}, responding to AppBlockRequest with {:?}", self.current_epoch, &new_message);
+                                info!("Epoch: {}, responding to AppBlockRequest with {:?}", epoch, &new_message);
+                                app_interface.send_to_app(&mut net_stack, new_message.serialize());
+                            },
+                            // Fulfill application request for chain (ask the app to create a TCP connection for transport)
+                            MessageKind::AppChainRequest => {
+                                // Construct message
+                                let new_message = Message::new_with_defined_tag(
+                                    MessagePayload::SocketAddr(local_addr),
+                                    MessageKind::AppChainResponse,
+                                    message.tag,
+                                    self.id,
+                                    self.name.clone(),
+                                );
+
+                                info!("Epoch: {}, responding to AppChainRequest with {:?}", epoch, &new_message);
                                 net_stack.broadcast_to_topic("app", new_message.serialize());
                             },
                             // Message only for application (we just ignore)
                             MessageKind::AppBlockResponse => { /* Do nothing? */ },
+                            MessageKind::AppChainResponse => { /* Do nothing? */ },
                             // Peer advertisement logic
                             MessageKind::PeerInit => {
                                 if let MessagePayload::PeerAdvertisement(ad) = &message.payload {
@@ -316,6 +379,10 @@ impl StreamletInstance {
                                     // Initialize vector of peers (for leader election)
                                     self.sorted_peer_names =
                                         self.public_keys.keys().cloned().sorted().collect();
+                                    
+                                    // Sometimes, "default" keys (empty string) end up in the map, 
+                                    // generally because of how it's initialized. Remove these here. 
+                                    self.sorted_peer_names.retain(|x| *x != String::new());
 
                                     // If we complete the peer discovery protocol, start timer
                                     // so that they start at roughly the same time on all nodes...
@@ -343,24 +410,24 @@ impl StreamletInstance {
                                     let mut new_message = message.clone();
 
                                     if self.is_notarized(&new_message) {
-                                        info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, checking for ancestor chain...", self.current_epoch, message.nonce);
+                                        info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, checking for ancestor chain...", epoch, message.nonce);
                                         let chain_index = self.blockchain_manager.index_of_ancestor_chain(block.clone());
                                         match chain_index {
                                             Some(idx) => {
-                                                info!("Epoch: {}, VOTE message {} descends from a notarized chain. Adding to chain...", self.current_epoch, message.nonce);
+                                                info!("Epoch: {}, VOTE message {} descends from a notarized chain. Adding to chain...", epoch, message.nonce);
                                                 self.blockchain_manager
                                             .       add_to_chain(block.clone(), message.clone().get_signatures(), idx);
                                                 // Only broadcast if we haven't signed already
                                                 if self.sign_message(&mut new_message) {
-                                                    info!("Epoch: {}, (Vote) received VOTE, signing and broadcasting message {}...", self.current_epoch, new_message.nonce);
+                                                    info!("Epoch: {}, (Vote) received VOTE, signing and broadcasting message {}...", epoch, new_message.nonce);
                                                     net_stack.broadcast_message(new_message.serialize());
                                                 }
                                             }
                                             None => {
-                                                info!("Epoch: {}, VOTE, message {} does not descend from a notarized chain. Will not sign or broadcast.", self.current_epoch, message.nonce);
+                                                info!("Epoch: {}, VOTE, message {} does not descend from a notarized chain. Will not sign or broadcast.", epoch, message.nonce);
                                             }
                                         }
-                                        info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, adding to chain...", self.current_epoch, message.nonce);
+                                        info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, adding to chain...", epoch, message.nonce);
                                     }
 
                                     self.pending_transactions.retain(|x| *x != block.data);
@@ -373,7 +440,8 @@ impl StreamletInstance {
                                 // If we haven't voted  yet this epoch and
                                 // we receive a message from the leader, sign and vote
                                 if let MessagePayload::Block(block) = &message.payload {
-                                    if (!self.voted_this_epoch && self.check_from_leader(&message)) 
+                                    let mut voted_this_epoch = voted_this_epoch_handle.lock().await;
+                                    if !(*voted_this_epoch) && self.check_from_leader(epoch, &message) 
                                     // DEMO: Technically not logically sound as this encapsulates multiple malicious acts but MultiVote compromise will just vote for everything >:D
                                     || self.compromise_type.is_multi_vote() 
                                     // DEMO: Unless node is compromised to never vote on anything
@@ -382,15 +450,15 @@ impl StreamletInstance {
                                         let mut new_message = message.clone();
                                         
                                         // Sign and broadcast
-                                        info!("Epoch: {}, (Propose) received PROPOSE, signing and broadcasting message {}...",self.current_epoch, message.nonce);
+                                        info!("Epoch: {}, (Propose) received PROPOSE, signing and broadcasting message {}...",epoch, message.nonce);
                                         new_message.kind = MessageKind::Vote;
                                         self.sign_message(&mut new_message);
                                         net_stack.broadcast_message(new_message.serialize());
-                                        self.voted_this_epoch = true;
+                                        *voted_this_epoch = true;
 
                                         // Add the received (+ signed by us) message to the chain if its notarized
                                         if self.is_notarized(&new_message) {
-                                            info!("Epoch: {}, (Propose) received PROPOSE, message {} is NOTARIZED, adding to chain...", self.current_epoch, message.nonce);
+                                            info!("Epoch: {}, (Propose) received PROPOSE, message {} is NOTARIZED, adding to chain...",epoch, message.nonce);
                                             self.blockchain_manager.index_of_ancestor_chain(block.clone()).map(|idx| 
                                                 self.blockchain_manager
                                                     .add_to_chain(block.clone(), message.clone().get_signatures(), idx)
@@ -407,9 +475,6 @@ impl StreamletInstance {
                                 debug!("Unknown message format/kind - ignoring");
                             },
                         };
-                    }
-                    EventType::DoInit => {
-                        peers.start_init(&mut net_stack, self.expected_peer_count);
                     }
                 }
             }
@@ -496,15 +561,19 @@ impl StreamletInstance {
     /* Determines if the block associated with a message is notarized.
     @param epoch: epoch number */
     pub fn is_notarized(&self, message: &Message) -> bool {
+        // Partially synchronous model: 
+        // - Finalize after three blocks
+        // - >= 2N/3 signatures for notarization 
+        // Note: expected peer count = excluding self; add one to get N
         return self.verify_message(message)
-            >= ((self.expected_peer_count + 1) as f64 / 2.0).ceil() as usize;
+            >= (2.0 * (self.expected_peer_count + 1) as f64 / 3.0).ceil() as usize;
     }
 
     /* Determines if the block associated with a message is notarized.
     @param epoch: epoch number */
-    fn check_from_leader(&self, message: &Message) -> bool {
+    fn check_from_leader(&self, epoch: u64, message: &Message) -> bool {
         // If message is from leader, only their signature should be on it
-        let leader = self.get_epoch_leader();
+        let leader = self.get_epoch_leader(epoch);
 
         // Make sure we have leader's public key
         if !self.public_keys.contains_key(leader) {
@@ -523,9 +592,9 @@ impl StreamletInstance {
     }
 
     /* Determines epoch leader using deterministic hash function. */
-    fn get_epoch_leader(&self) -> &String {
+    fn get_epoch_leader(&self, epoch: u64) -> &String {
         let mut hasher = DefaultHasher::new();
-        hasher.write_u64(self.current_epoch);
+        hasher.write_u64(epoch);
         let result = hasher.finish() as usize;
         let leader_index = result % (self.expected_peer_count + 1); // +1 for self
         return &self.sorted_peer_names[leader_index];
@@ -604,8 +673,44 @@ mod tests {
     }
 }
 
+async fn run_tcp_server(listener: TcpListener, 
+                mut tcp_data_receiver: mpsc::UnboundedReceiver<Vec<u8>>, 
+                tcp_connect_trigger: tokio::sync::watch::Sender<&str>) 
+{
+    loop {
+        let (mut stream, _) = listener.accept().await.expect("Failed to accept TCP connection");
+
+        // Determine Request Type
+        let mut msg_bytes = Vec::new();
+        stream.read_to_end(&mut msg_bytes).await.expect("Did not recieive data");
+        let msg = String::from_utf8(msg_bytes.clone()).expect("Unable to decode msg bytes");
+        
+        // Ask streamlet for data
+        match msg.as_str() {
+            "chain" => {
+                debug!("(TCP Thread) asking streamlet for chain");
+                tcp_connect_trigger.send("chain").expect("TCP connect trigger closed?");
+            }
+            "block" => { 
+                debug!("(TCP Thread) asking streamlet for block");
+                tcp_connect_trigger.send("block").expect("TCP connect trigger closed?"); 
+            }
+            _ => { 
+                info!("Unknown TCP request type"); 
+            }
+        }
+        let data: Vec<u8> = tcp_data_receiver.recv().await.expect("Expected to receive data from streamlet...");
+        
+        // Send through TCP stream
+        stream.write_all(&data).await.expect("Failed writing data to TCP stream...");
+        stream.flush().await.expect("Failed to flush stream...");
+        stream.shutdown().await.expect("Failed to close stream...");
+    }
+}
+
 // ***** APPLICATION *****
 pub async fn run_app() {
     let mut app = app::Application::new();
     app.run().await;
 }
+

@@ -39,7 +39,7 @@ impl BlockchainManager {
     pub fn is_chain_valid(chain: LocalChain) -> bool {
         // this will be very trivial chain validation check so we don't have to start making this into notarizing/finalizing/etc...
         // not totally sure how involved to get with it at the moment
-        for i in 0..chain.blocks.len() {
+        for i in 0..chain.length() {
             if i == 0 {
                 // genesis block can be ignored
                 continue;
@@ -78,7 +78,7 @@ impl BlockchainManager {
 
                 notarized_chain.append_block(notarized_block.clone(), signatures);
                 info!("\n\nAdded notarized block with epoch: {}, \nnonce: {}, \nparent hash: {:?}, \nhash: {:?}\nNew chain: {}\n",
-                      notarized_block.epoch, notarized_block.nonce, std::str::from_utf8(&notarized_block.parent_hash[..]), std::str::from_utf8(&notarized_block.hash[..]), notarized_chain);
+                      notarized_block.epoch, notarized_block.nonce, String::from_utf8_lossy(&notarized_block.parent_hash[..]), String::from_utf8_lossy(&notarized_block.hash[..]), notarized_chain);
                 if notarized_chain.length() > self.longest_notarized_chain_length {
                     self.longest_notarized_chain_length = notarized_chain.length();
                     info!(
@@ -86,7 +86,7 @@ impl BlockchainManager {
                         self.longest_notarized_chain_length
                     );
                 }
-                self.notarized_chains.sort_by(|a, b| b.blocks.len().cmp(&a.blocks.len()));
+                self.notarized_chains.sort_by(|a, b| b.length().cmp(&a.length()));
                 self.try_finalize(chain_index);
             }
             None => {}
@@ -101,44 +101,46 @@ impl BlockchainManager {
         // Check if the last 3 consecutive notarized blocks have sequential epochs and if so, commit the first two to finalized log
         // This may need to be generalized to be an overall loop; can change it then if needed just wasn't sure why it would have to be this way
         let notarized_chain = &self.notarized_chains[notarized_chain_idx];
-        if notarized_chain.blocks.len() < 4 {
+        // Require 3 blocks
+        if notarized_chain.length() < 3 {
             return;
         }
-        let i = notarized_chain.blocks.len();
+        let i = notarized_chain.length();
+        // Newest block 
         let SignedBlock { block: newest, .. } = notarized_chain
             .blocks
             .get(i - 1)
             .expect("expected recent block");
+        // Second-newest block 
         let SignedBlock {
             block: commit_2, ..
         } = notarized_chain
             .blocks
             .get(i - 2)
             .expect("expected latter notarized block");
+        // Third-newest block
         let SignedBlock {
             block: commit_1, ..
         } = notarized_chain
             .blocks
             .get(i - 3)
             .expect("expected former notarized block");
-        if newest.epoch == commit_2.epoch + 1 && commit_2.epoch == commit_1.epoch + 1 {
-            // Since chain is implicitly finalized up to commit_2
-            // TODO make more efficient, e.g. only add missing blocks
-            // TODO fix to check 6 commits
+
+        if newest.epoch == commit_2.epoch + 1 
+            && commit_2.epoch == commit_1.epoch + 1 {
             self.finalized_chain = notarized_chain.copy_up_to_height(commit_2.height);
             self.finalized_chain_length = self.finalized_chain.length();
             info!(
                 "\n\nSuccessfully finalized chain, new finalized chain {}\n",
                 self.finalized_chain
             );
+
         }
     }
 
-    // TODO: Implement this push to a file & then the `BadPublish` compromised scenario
-    pub fn export_local_chain(&self) {
+    pub fn export_local_chain(&self) -> LocalChain {
         // not totally sure on how to specify the where to export to functionality so for now this just pretty-prints the finalized chain representing the log
-        println!("{:?}", self.finalized_chain);
-        todo!()
+        self.finalized_chain.clone()
     }
 
     /* Returns the most recent notarized block on one of the longest notarized
