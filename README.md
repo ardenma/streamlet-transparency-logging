@@ -1,4 +1,4 @@
-# A Transparency Logging System for Streamlet
+# Instructions for Running
 
 To run Streamlet: 
 - Open N terminal instances, where N=the number of Streamlet nodes you wish to run.
