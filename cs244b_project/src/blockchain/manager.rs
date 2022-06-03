@@ -1,5 +1,9 @@
 use crate::blockchain::*;
 use log::info;
+use std::fs;
+use std::fs::OpenOptions;
+use std::env;
+use std::io::{Read, Write};
 
 // Struct for managing multiple notarized chains and a finalied chain.
 // Provides the abstraction of a single Chain the user can query/manipulate
@@ -9,9 +13,8 @@ pub struct BlockchainManager {
     pub finalized_chain_length: usize,
     pub finalized_chain: LocalChain,
     pub longest_notarized_chain_length: usize, // length = max_height + 1
-    notarized_chains: Vec<LocalChain>, // i *think* we only track a certain number of these... not sure how to determine this exactly
-                                       // longest_notarized_chain: LocalChain,
-                                       // unconfirmed_pending_transactions: String, // we should formulate some actual Transaction struct but I'm not sure what that looks like
+    notarized_chains: Vec<LocalChain>, 
+    pub last_logged_epoch: u64,
 }
 
 impl BlockchainManager {
@@ -25,6 +28,7 @@ impl BlockchainManager {
             finalized_chain: LocalChain::new(),
             longest_notarized_chain_length: 1,
             notarized_chains: Vec::from([LocalChain::new()]),
+            last_logged_epoch: 0,
         }
     }
 
@@ -137,13 +141,42 @@ impl BlockchainManager {
                 "\n\nSuccessfully finalized chain, new finalized chain {}\n",
                 self.finalized_chain
             );
-
         }
     }
 
-    pub fn export_local_chain(&self) -> LocalChain {
-        // not totally sure on how to specify the where to export to functionality so for now this just pretty-prints the finalized chain representing the log
-        self.finalized_chain.clone()
+    pub fn fetch_chain_after_epoch(&mut self, epoch: u64) -> Vec<SignedBlock> {
+        let chain = self.finalized_chain.clone().blocks;
+        let chain = chain
+            .into_iter()
+            .filter(|signed_block| (signed_block.block.epoch > epoch) || (self.last_logged_epoch == 0))
+            .collect();
+        chain
+    }
+    pub fn fetch_local_finalized_chain(&self) -> LocalChain { self.finalized_chain.clone() }
+    pub fn export_local_finalized_chain_to_file(&mut self, local_file_path: String) {
+        let last_epoch = self.last_logged_epoch;
+        info!("exporting local finalized chain to: {}", local_file_path);
+        let mut file = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(local_file_path)
+            .unwrap();
+        let unlogged_chain = serde_json::to_string_pretty(&self.fetch_chain_after_epoch(last_epoch)).unwrap();
+        file.write_all(unlogged_chain.as_bytes()).unwrap();
+        self.last_logged_epoch = self.get_latest_finalized_block().0.epoch;
+    }
+    pub fn publish_last_finalized_block(&self) {
+        info!("publishing most recent finalized block to public chain");
+        // Hard-coding the public path here but if we want to get fancy with it we could have this be determined by the app or have it be specifiable. Just trying to make checking easy
+        let public_path = format!("{}/src/tmp/{}.txt", env::current_dir().expect("invalid current directory").display().to_string(), "pub");
+        let mut file = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(public_path)
+            .unwrap();
+        let latest_finalized_block_msg = serde_json::to_string_pretty(&self.get_latest_finalized_block()).unwrap();
+        file.write_all(latest_finalized_block_msg.as_bytes()).unwrap();
+        
     }
 
     /* Returns the most recent notarized block on one of the longest notarized
@@ -179,7 +212,7 @@ impl BlockchainManager {
 
     pub fn print_finalized_chains(&self) {
         println!("************************ PRINTING FINALIZED CHAIN **********************");
-        println!("{}", self.finalized_chain);
+        println!("{:?}", self.finalized_chain);
         println!("*************************************************************************");
     }
 
