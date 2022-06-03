@@ -18,7 +18,7 @@ use log::{debug, info, warn};
 use std::time::Duration;
 use tokio::{
     io::{stdin, AsyncBufReadExt, BufReader},
-    select, spawn,
+    select, 
     sync::{mpsc, watch},
     time::sleep,
 };
@@ -43,6 +43,19 @@ pub struct StreamletInstance {
     public_keys: HashMap<String, PublicKey>,
     sorted_peer_names: Vec<String>,
     epoch_of_last_published_block: u64,
+    // Solely for demoability
+    pub compromise_type: CompromiseType,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum CompromiseType {
+    WrongParentHash, // Implemented behavior
+    NoPropose, // Implemented behavior
+    NoVote, // Implemented behavior
+    NonLeaderPropose, // Implemented behavior
+    EarlyEpoch, // Implemented behavior
+    LateEpoch, // Implemented behavior
+    NoCompromise,
 }
 
 enum EventType {
@@ -53,7 +66,9 @@ enum EventType {
     TCPRequestChain,
 }
 
-const EPOCH_LENGTH_S: u64 = 5;
+// Toggle based on number of nodes. 
+// Should be higher for more nodes s.t. time for finalization. 
+const EPOCH_LENGTH_S: u64 = 10;
 const EPOCH_DELAY_MS: u64 = 100;
 const PUBLISH_RATE: u64 =  10;
 
@@ -72,7 +87,6 @@ impl StreamletInstance {
         let mut csprng = OsRng {};
         let keypair: Keypair = Keypair::generate(&mut csprng);
         let pk: PublicKey = keypair.public.clone();
-        // let id = rand::thread_rng().gen();  // TODO: set this up in peer init? currently chance for collision
 
         // Build the streamlet instance
         Self {
@@ -85,6 +99,7 @@ impl StreamletInstance {
             public_keys: HashMap::from([(name.clone(), pk)]),
             sorted_peer_names: Vec::new(),
             epoch_of_last_published_block: 0,
+            compromise_type: CompromiseType::NoCompromise,
         }
     }
 
@@ -95,8 +110,9 @@ impl StreamletInstance {
     pub async fn run(&mut self) {
 
         // Share the epoch data here
-        let current_epoch_handle = Arc::new(Mutex::new(0));
-        let voted_this_epoch_handle = Arc::new(Mutex::new(false));
+        let current_epoch_handle = Arc::new(Mutex::new(1));
+        // If we've voted in the current epoch, store our "vote" (signature) here
+        let vote_this_epoch_handle = Arc::new(Mutex::new(None));
         // Initialize
         // (1) message queue for the network to send us data
         // (2) message queue for us to receive data from the network
@@ -117,7 +133,7 @@ impl StreamletInstance {
 
         // Accept create channels for streamlet instance to send / receive messages from the TCP thread
         let (tcp_connect_trigger, mut tcp_connect_recv) = watch::channel("tcp_conenct");
-        let (tcp_data_sender, mut tcp_data_receiver) = mpsc::unbounded_channel();
+        let (tcp_data_sender, tcp_data_receiver) = mpsc::unbounded_channel();
 
         // Spawn thread to listen for TCP requests
         tokio::spawn(async move {
@@ -132,9 +148,9 @@ impl StreamletInstance {
         let (timer_trigger, mut timer_recv) = watch::channel("timer_init");
         let (epoch_trigger, mut epoch_recv) = watch::channel("epoch_trigger");
 
-        let mut current_epoch_handle_timer = current_epoch_handle.clone();
+        let current_epoch_handle_timer = current_epoch_handle.clone();
         // Epoch timer thread
-        let voted_this_epoch_handle_copy = voted_this_epoch_handle.clone();
+        let vote_this_epoch_handle_timer = vote_this_epoch_handle.clone();
         tokio::spawn(async move {
             // Wait until signaled that peer discovery is done
             let _ = timer_recv.changed().await.is_ok();
@@ -145,9 +161,10 @@ impl StreamletInstance {
                 let mut current_epoch = current_epoch_handle_timer.lock().await;
                 *current_epoch = *current_epoch + 1;
                 drop(current_epoch);
-                let mut voted_this_epoch = voted_this_epoch_handle_copy.lock().await;
-                *voted_this_epoch = false;
-                drop(voted_this_epoch);
+                // Reset along with epoch counter
+                let mut vote_this_epoch = vote_this_epoch_handle_timer.lock().await;
+                *vote_this_epoch = None;
+                drop(vote_this_epoch);
                 epoch_trigger.send("tick!").expect("Timer reciever closed?");
             }
         });
@@ -199,12 +216,35 @@ impl StreamletInstance {
                         if line.starts_with("init") {
                             peers.advertise_self(&mut net_stack);
                         }
-                        if line.starts_with("end discovery") || line.starts_with("e d") {
+                        if line.starts_with("end init") || line.starts_with("e i") || line.starts_with("end discovery") || line.starts_with("e d") {
                             peers.send_end_init(&mut net_stack);
                         } else if line.starts_with("notarized chains") || line.starts_with("nc") {
                             self.blockchain_manager.print_notarized_chains();
                         } else if line.starts_with("finalized chain") || line.starts_with("fc") {
                             self.blockchain_manager.print_finalized_chains();
+                        }
+
+                        /*
+                         *  Inputs to compromise a specific node to test failure behavior
+                         *  Obviously, this would not exist in an actual implementation, just for demo-ability 
+                         */ 
+                        else if line.starts_with("compromise early-epoch") || line.starts_with("ee")  {
+                            self.compromise_type = CompromiseType::EarlyEpoch
+                        }
+                        else if line.starts_with("compromise late-epoch") || line.starts_with("le")  {
+                            self.compromise_type = CompromiseType::LateEpoch
+                        }
+                        else if line.starts_with("compromise no-propose") || line.starts_with("np") {
+                            self.compromise_type = CompromiseType::NoPropose
+                        }
+                        else if line.starts_with("compromise wrong-parent-hash") || line.starts_with("wp") {
+                            self.compromise_type = CompromiseType::WrongParentHash
+                        }
+                        else if line.starts_with("compromise no-vote") || line.starts_with("nv") {
+                            self.compromise_type = CompromiseType::NoVote
+                        }
+                        else if line.starts_with("compromise non-leader-propose") || line.starts_with("nlp") {
+                            self.compromise_type = CompromiseType::NonLeaderPropose
                         }
                     }
                     EventType::TCPRequestChain => {
@@ -223,6 +263,7 @@ impl StreamletInstance {
                     }
                     EventType::EpochStart => {
 
+                        // Want to hold locks for as little time as possible s.t. timer doesn't get out of sync
                         let current_epoch_ref = current_epoch_handle.lock().await;
                         let epoch = *current_epoch_ref;
                         drop(current_epoch_ref);
@@ -232,7 +273,9 @@ impl StreamletInstance {
                         info!("Epoch: {} starting with leader {}...", epoch, leader);
 
                         // If I am the current leader, propose a block
-                        if leader == &self.name {
+                        if leader == &self.name 
+                        || self.compromise_type == CompromiseType::NonLeaderPropose
+                        && !(self.compromise_type == CompromiseType::NoPropose) {
                             info!("I'm the leader");
 
                             if epoch % PUBLISH_RATE == 0 {
@@ -259,10 +302,17 @@ impl StreamletInstance {
                                 )
                                 .unwrap();
                                 let (parent, _) = self.blockchain_manager.head();
-                                let parent_hash = parent.hash.clone();
+                                let mut parent_hash = parent.hash.clone();
                                 let proposed_block = Block::new(
-                                    epoch,
-                                    parent_hash,
+                                    {
+                                        if self.compromise_type == CompromiseType::EarlyEpoch { 0 }
+                                        else if self.compromise_type == CompromiseType::LateEpoch { epoch + 50 } 
+                                        else { epoch }
+                                    },
+                                    { 
+                                        if self.compromise_type == CompromiseType::WrongParentHash { parent_hash.sort() } 
+                                        parent_hash
+                                    },
                                     data,
                                     height,
                                     rand::thread_rng().gen(),
@@ -277,9 +327,12 @@ impl StreamletInstance {
                                 );
 
                                 // Sign and send mesasage
-                                if self.sign_message(&mut message) {
+                                if let Some(sig) = self.sign_message(&mut message) {
                                     info!("Epoch: {}, (Propose) SENDING proposal, broadcasting message {}...", epoch, message.nonce);
                                     net_stack.broadcast_message(message.serialize());
+                                    let mut vote_this_epoch_ref = vote_this_epoch_handle.lock().await;
+                                    *vote_this_epoch_ref = Some(sig);
+                                    drop(vote_this_epoch_ref);
                                 } else {
                                     debug!("something weird happened...")
                                 }
@@ -289,19 +342,28 @@ impl StreamletInstance {
                     EventType::NetworkInput(bytes) => {
                         // Received message
                         let message = Message::deserialize(&bytes);
+                        
+                        // Lock mutexes short-term. 
+                        // Locking for too long causes epoch timers to get out of sync. 
                         let current_epoch_ref = current_epoch_handle.lock().await;
                         let epoch = *current_epoch_ref;
                         drop(current_epoch_ref);
-                        info!("Epoch: {}, Received {:?} message...", epoch, &message.kind);
-                    
+                        let vote_this_epoch_ref = vote_this_epoch_handle.lock().await;
+                        let vote_this_epoch = *vote_this_epoch_ref;
+                        drop(vote_this_epoch_ref);
 
+                        debug!("Epoch: {}, Received {:?} message...", epoch, &message.kind);
+                    
                         // Message processing logic
                         match &message.kind {
                             // Data from application
                             MessageKind::AppSend => {
                                 match &message.payload {
                                     MessagePayload::AppData(data) => {
-                                        self.pending_transactions.push_back(data.clone());
+                                        info!("Epoch: {}, received message from app; adding to pending transactions", epoch);
+                                        if app_interface.message_is_from_app(&message) && app_interface.data_is_valid(&message) {
+                                            self.pending_transactions.push_back(data.clone());
+                                        }
                                     }
                                     _ => {
                                         debug!("Unkown payload for MessageKind::AppSend");
@@ -338,8 +400,8 @@ impl StreamletInstance {
                                 net_stack.broadcast_to_topic("app", new_message.serialize());
                             },
                             // Message only for application (we just ignore)
-                            MessageKind::AppBlockResponse => { /* Do nothing? */ },
-                            MessageKind::AppChainResponse => { /* Do nothing? */ },
+                            MessageKind::AppBlockResponse => { /* Do nothing */ },
+                            MessageKind::AppChainResponse => { /* Do nothing */ },
                             // Peer advertisement logic
                             MessageKind::PeerInit => {
                                 if let MessagePayload::PeerAdvertisement(ad) = &message.payload {
@@ -356,7 +418,6 @@ impl StreamletInstance {
 
                                     // If we complete the peer discovery protocol, start timer
                                     // so that they start at roughly the same time on all nodes...
-                                    // TODO do a better job of syncing timers...
                                     match status {
                                         peer_init::InitStatus::DoneStartTimer => {
                                             let _ = timer_trigger.send("start!").is_ok();
@@ -368,39 +429,40 @@ impl StreamletInstance {
                                 }
                             },
                             // Implicit echo logic
-                            // TODO: decide whether we think something's legit
                             MessageKind::Vote => {
-                                // Currently signing + echoing everything...
-                                // Should probably only sign things we already voted on??
-                                // Note sure... TODO
-                                // Also when do we stop echoing??? TODO
-                                // TODO make sure we only add a notarized block once lol
                                 if let MessagePayload::Block(block) = &message.payload {
                                     // Clone of message that we can modify
                                     let mut new_message = message.clone();
-
-                                    if self.is_notarized(&new_message) {
-                                        info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, checking for ancestor chain...", epoch, message.nonce);
-                                        let chain_index = self.blockchain_manager.index_of_ancestor_chain(block.clone());
-                                        match chain_index {
-                                            Some(idx) => {
-                                                info!("Epoch: {}, VOTE message {} descends from a notarized chain. Adding to chain...", epoch, message.nonce);
-                                                self.blockchain_manager
-                                            .       add_to_chain(block.clone(), message.clone().get_signatures(), idx);
-                                                // Only broadcast if we haven't signed already
-                                                if self.sign_message(&mut new_message) {
-                                                    info!("Epoch: {}, (Vote) received VOTE, signing and broadcasting message {}...", epoch, new_message.nonce);
-                                                    net_stack.broadcast_message(new_message.serialize());
-                                                }
-                                            }
-                                            None => {
-                                                info!("Epoch: {}, VOTE, message {} does not descend from a notarized chain. Will not sign or broadcast.", epoch, message.nonce);
+                                    // Don't "endorse" this vote unless you've already gotten a proposal 
+                                    if vote_this_epoch.is_some() {
+                                        if let Some(sig) = self.should_vote(&mut new_message, vote_this_epoch, epoch, &block, &app_interface) {
+                                            if self.compromise_type != CompromiseType::NoVote {
+                                                // Broadcast messages that we haven't signed yet
+                                                // Note: this is an inexact, but reasonable, proxy for echoing
+                                                info!("Epoch {}: NEW and VALID message {}; broadcasting", epoch, message.nonce);
+                                                net_stack.broadcast_message(new_message.serialize());
+                                                // Update -- we just voted!
+                                                let mut vote_this_epoch_ref = vote_this_epoch_handle.lock().await;
+                                                *vote_this_epoch_ref = Some(sig);
+                                                drop(vote_this_epoch_ref);
+                                                // Once we've voted for a transaction, we should never propose it. 
+                                                self.pending_transactions.retain(|x| *x != block.data);
                                             }
                                         }
-                                        info!("Epoch: {}, (Vote) received VOTE, message {} is NOTARIZED, adding to chain...", epoch, message.nonce);
                                     }
-
-                                    self.pending_transactions.retain(|x| *x != block.data);
+                                    // If block is notarized and still extends from a longest notarized chain, 
+                                    // then add it to the chain. 
+                                    if self.is_notarized(&message) {
+                                        let index = self.blockchain_manager.index_of_ancestor_chain(block.clone());
+                                        if index.is_some() {
+                                            info!("Epoch {}: Adding notarized message {} to chain {}", epoch, message.nonce, index.unwrap());
+                                            self.blockchain_manager.add_to_chain( 
+                                                block.clone(), 
+                                                message.clone().get_signatures(), 
+                                                index.unwrap()
+                                            );
+                                        }
+                                    }
                                 } else {
                                     debug!("Unkown payload for MessageKind::Vote");
                                 }
@@ -410,20 +472,24 @@ impl StreamletInstance {
                                 // If we haven't voted  yet this epoch and
                                 // we receive a message from the leader, sign and vote
                                 if let MessagePayload::Block(block) = &message.payload {
-                                    let mut voted_this_epoch = voted_this_epoch_handle.lock().await;
-                                    if !(*voted_this_epoch) && self.check_from_leader(epoch, &message) {
-                                        // Clone of message that we can modify
-                                        let mut new_message = message.clone();
-                                        
-                                        // Sign and broadcast
-                                        info!("Epoch: {}, (Propose) received PROPOSE, signing and broadcasting message {}...",epoch, message.nonce);
-                                        new_message.kind = MessageKind::Vote;
-                                        self.sign_message(&mut new_message);
-                                        net_stack.broadcast_message(new_message.serialize());
-                                        *voted_this_epoch = true;
-
+                                    // Clone of message that we can modify
+                                    let mut new_message = message.clone();
+                                    let signature = self.should_vote(&mut new_message, vote_this_epoch, epoch, &block, &app_interface);
+                                    if let Some(sig) = signature {
+                                        if self.compromise_type != CompromiseType::NoVote {
+                                            // Sign and broadcast
+                                            info!("Epoch: {}, (Propose) received valid PROPOSE, signing and broadcasting message {}...",epoch, message.nonce);
+                                            new_message.kind = MessageKind::Vote;
+                                            net_stack.broadcast_message(new_message.serialize());
+                                            // If an epoch has passed since we locked the mutex, then we may miss an epoch of voting.
+                                            // This is assumed to be rare, and nodes will recover in the next epoch. 
+                                            // Update - we just voted!
+                                            let mut vote_this_epoch_ref = vote_this_epoch_handle.lock().await;
+                                            *vote_this_epoch_ref = Some(sig);
+                                            drop(vote_this_epoch_ref);
+                                        }
                                         // Add the received (+ signed by us) message to the chain if its notarized
-                                        if self.is_notarized(&new_message) {
+                                        if self.is_notarized(&message) {
                                             info!("Epoch: {}, (Propose) received PROPOSE, message {} is NOTARIZED, adding to chain...",epoch, message.nonce);
                                             self.blockchain_manager.index_of_ancestor_chain(block.clone()).map(|idx| 
                                                 self.blockchain_manager
@@ -476,16 +542,16 @@ impl StreamletInstance {
     Returns true if we successfully sign, false if it's already been signed
     by us
      @param message: the message instance with a payload to be signed */
-    fn sign_message(&self, message: &mut Message) -> bool {
+    fn sign_message(&self, message: &mut Message) -> Option<Signature> {
         // Create signature
-        let signature: Signature = self.keypair.sign(message.serialize_payload().as_slice());
+        let signature: Signature = self.sign(message.serialize_payload().as_slice());
         // Make sure we haven't signed already
         for s in message.clone().get_signatures() {
-            if signature == s { return false; }
+            if signature == s { return None; }
         }
 
         message.sign_message(signature.clone());
-        return true;
+        return Some(signature);
     }
 
     /* Verifies a (message, signature) pair against a public key.
@@ -494,7 +560,7 @@ impl StreamletInstance {
     @param pk: public key to verify against the signature */
     fn verify_signature(&self, message: &Message, signature: &Signature, pk: &PublicKey) -> bool {
         let result = pk.verify(message.serialize_payload().as_slice(), signature);
-        if let Err(error) = result {
+        if let Err(_) = result {
             return false;
         } else {
             return true;
@@ -507,12 +573,15 @@ impl StreamletInstance {
         let mut num_valid_signatures = 0;
         let signatures = message.clone().get_signatures(); // Check all signatures
 
-        // Check all sigatures on the message (TODO check duplicates)
+        // Check all sigatures on the message; prevent double-signing
+        let mut seen = std::collections::HashSet::new();
         for signature in signatures.iter() {
             // Check against all known pk's
-            for pk in self.public_keys.values() {
-                if self.verify_signature(message, signature, pk) {
+            for name in self.public_keys.keys() {
+                let pk = self.public_keys[name];
+                if !seen.contains(name) && self.verify_signature(message, signature, &pk) {
                     num_valid_signatures += 1;
+                    seen.insert(name);
                     break;
                 }
             }
@@ -535,6 +604,34 @@ impl StreamletInstance {
             >= (2.0 * (self.expected_peer_count + 1) as f64 / 3.0).ceil() as usize;
     }
 
+    fn should_vote(&mut self, message: &mut Message, vote_this_epoch: Option<Signature>, epoch: u64, block: &Block, app_interface: &AppInterface) -> Option<Signature> {
+        
+        // Basic checks:
+        if !self.check_from_leader(epoch, &message) || // From the leader? 
+            // Correct epoch? 
+            block.epoch != epoch  || 
+            // Descends from ancestor? 
+            self.blockchain_manager.index_of_ancestor_chain(block.clone()).is_none() ||
+            // Is the data valid? 
+            !app_interface.data_is_valid(&message)
+        {
+            return None;
+        }
+
+        let sig = self.sign_message(message);
+
+        if let Some(signature_value) = sig {
+            // Vote if and only if: 
+            // - We haven't voted before in this epoch
+            // - This is a re-broadcast of our vote in this epoch
+            if vote_this_epoch.is_none() || vote_this_epoch.unwrap() == signature_value {
+                return Some(signature_value);
+            }
+        }
+
+        None 
+    }
+
     /* Determines if the block associated with a message is notarized.
     @param epoch: epoch number */
     fn check_from_leader(&self, epoch: u64, message: &Message) -> bool {
@@ -550,7 +647,7 @@ impl StreamletInstance {
 
         // Check leader's signature
         let signatures = message.clone().get_signatures();
-        if signatures.len() == 1 {
+        if signatures.len() >= 1 {
             return self.verify_signature(message, &signatures[0], &leader_pk);
         } else {
             return false;
@@ -565,11 +662,10 @@ impl StreamletInstance {
         let leader_index = result % (self.expected_peer_count + 1); // +1 for self
         return &self.sorted_peer_names[leader_index];
     }
-    /* Determines epoch leader using deterministic hash function.
-    @param epoch: epoch number
-    Note: for testing, should be taken care of in peer discovery. */
+
+    /* Add public key to local data structure. */
     pub fn add_public_key(&mut self, instance_name: String, pk: &PublicKey) {
-        self.public_keys.insert(instance_name, pk.clone()); // TODO catch errors with insertion?
+        self.public_keys.insert(instance_name, pk.clone());
     }
 }
 
