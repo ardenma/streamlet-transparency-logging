@@ -42,8 +42,8 @@ pub struct StreamletInstance {
     keypair: Keypair,
     public_keys: HashMap<String, PublicKey>,
     sorted_peer_names: Vec<String>,
-    seen_block_this_epoch: Option<[u8; 32]>,
-    sigs_on_seen_block_this_epoch: Vec<Signature>,
+    seen_block_epoch: HashMap<u64, [u8; 32]>,
+    sigs_on_seen_block_epoch: HashMap<u64, Vec<Signature>>,
     epoch_of_last_published_block: u64,
     // Solely for demoability
     pub compromise_type: CompromiseType,
@@ -70,7 +70,7 @@ enum EventType {
 
 // Toggle based on number of nodes. 
 // Should be higher for more nodes s.t. time for finalization. 
-const EPOCH_LENGTH_S: u64 = 10;
+const EPOCH_LENGTH_S: u64 = 60;
 const EPOCH_DELAY_MS: u64 = 100;
 const PUBLISH_RATE: u64 =  10;
 
@@ -100,8 +100,8 @@ impl StreamletInstance {
             keypair: keypair,
             public_keys: HashMap::from([(name.clone(), pk)]),
             sorted_peer_names: Vec::new(),
-            seen_block_this_epoch: None,
-            sigs_on_seen_block_this_epoch: vec![],
+            seen_block_epoch: HashMap::new(),
+            sigs_on_seen_block_epoch: HashMap::new(),
             epoch_of_last_published_block: 0,
             compromise_type: CompromiseType::NoCompromise,
         }
@@ -266,16 +266,11 @@ impl StreamletInstance {
                         tcp_data_sender.send(serialize(&signed_block).expect("Failed to serialize block")).expect("Failed to send block..");
                     }
                     EventType::EpochStart => {
-                        // Note: it's okay if these slightly trail the epoch timer; 
-                        // they won't be checked or added to unless "this epoch's" 
-                        // sigature -- reset by the timer task -- is populated.
-                        self.seen_block_this_epoch = None;
-                        self.sigs_on_seen_block_this_epoch = vec![];
-
                         // Want to hold locks for as little time as possible s.t. timer doesn't get out of sync
                         let current_epoch_ref = current_epoch_handle.lock().await;
                         let epoch = *current_epoch_ref;
                         drop(current_epoch_ref);
+                        self.sigs_on_seen_block_epoch.insert(epoch, Vec::new());
 
                         let leader = self.get_epoch_leader(epoch);
                         
@@ -327,9 +322,10 @@ impl StreamletInstance {
                                     rand::thread_rng().gen(),
                                 );
 
+                                let hash = proposed_block.hash.clone();
                                 // Construct message
                                 let mut message = Message::new(
-                                    MessagePayload::Block(proposed_block),
+                                    MessagePayload::Block(proposed_block.clone()),
                                     MessageKind::Propose,
                                     self.id,
                                     self.name.clone(),
@@ -337,6 +333,8 @@ impl StreamletInstance {
 
                                 // Sign and send mesasage
                                 if let Some(sig) = self.sign_message(&mut message) {
+                                    self.seen_block_epoch.insert(epoch, hash);
+                                    self.sigs_on_seen_block_epoch.get_mut(&epoch).unwrap().push(sig);
                                     info!("Epoch: {}, (Propose) SENDING proposal, broadcasting message {}...", epoch, message.nonce);
                                     net_stack.broadcast_message(message.serialize());
                                     let mut vote_this_epoch_ref = vote_this_epoch_handle.lock().await;
@@ -442,19 +440,20 @@ impl StreamletInstance {
                                 if let MessagePayload::Block(block) = &message.payload {
                                     // Don't "accept" this vote unless you've already gotten a proposal 
                                     // in the same epoch, and this is a Vote on the same block. 
-                                    if vote_this_epoch.is_some() && self.seen_block_this_epoch == Some(block.hash) {
+                                    if self.seen_block_epoch.contains_key(&block.epoch) && 
+                                        self.seen_block_epoch[&block.epoch] == block.hash {
+
                                         // First get all valid, not-yet-received signatures on the block: 
                                         let mut valid_new_signatures = Vec::new();
-                                        self.get_valid_new_signatures(&message, &mut valid_new_signatures);
+                                        self.get_valid_new_signatures(&message, block.epoch, &mut valid_new_signatures);
                                         // If there are new signatures, echo!
                                         if valid_new_signatures.len() > 0 {
                                             // Record them as seen
-                                            self.sigs_on_seen_block_this_epoch.append(&mut valid_new_signatures);
-                                            self.sigs_on_seen_block_this_epoch.dedup();
+                                            self.sigs_on_seen_block_epoch.get_mut(&block.epoch).unwrap().append(&mut valid_new_signatures);
                                             // Clone of message that we can modify
                                             let mut new_message = message.clone();
                                             // Add all signatures to echo (reduces needed echoing before notarization)
-                                            new_message.signatures = self.sigs_on_seen_block_this_epoch.clone();
+                                            new_message.signatures = self.sigs_on_seen_block_epoch[&block.epoch].clone();
                                             if self.compromise_type != CompromiseType::NoVote {
                                                 info!("Epoch {}: VOTED and signed message {}; broadcasting", epoch, message.nonce);
                                                 net_stack.broadcast_message(new_message.serialize());
@@ -471,6 +470,9 @@ impl StreamletInstance {
                                                 message.clone().get_signatures(), 
                                                 index.unwrap()
                                             );
+                                            // Clean up once we've echoed sufficient signatures to notarize.
+                                            self.seen_block_epoch.remove(&block.epoch);
+                                            self.sigs_on_seen_block_epoch.remove(&block.epoch);
                                         }
                                     }
                                     
@@ -491,9 +493,9 @@ impl StreamletInstance {
                                             // Sign and broadcast
                                             info!("Epoch: {}, (Propose) received PROPOSE, signing and broadcasting message {}...",epoch, message.nonce);
                                             new_message.kind = MessageKind::Vote;
-                                            self.seen_block_this_epoch = Some(block.hash);
+                                            self.seen_block_epoch.insert(block.epoch, block.hash);
                                             // Add our signature and the leader's signature
-                                            self.sigs_on_seen_block_this_epoch.append(&mut new_message.clone().get_signatures());
+                                            self.sigs_on_seen_block_epoch.insert(block.epoch, new_message.signatures.clone());
                                             
                                             net_stack.broadcast_message(new_message.serialize());
                                             // If an epoch has passed since we locked the mutex, then we may miss an epoch of voting.
@@ -510,6 +512,9 @@ impl StreamletInstance {
                                                 self.blockchain_manager
                                                     .add_to_chain(block.clone(), message.clone().get_signatures(), idx)
                                             );
+                                            // Clean up 
+                                            self.seen_block_epoch.remove(&block.epoch);
+                                            self.sigs_on_seen_block_epoch.remove(&block.epoch);
                                         }
 
                                         self.pending_transactions.retain(|x| *x != block.data);
@@ -574,10 +579,13 @@ impl StreamletInstance {
         @param message: the message instance with signatures
         @param ret: the vector to populate
      */
-    fn get_valid_new_signatures(&self, message: &Message, ret: &mut Vec<Signature>) {
+    fn get_valid_new_signatures(&self, message: &Message, block_epoch: u64, ret: &mut Vec<Signature>) {
+        if !self.sigs_on_seen_block_epoch.contains_key(&block_epoch) {
+            return;
+        }
         for signature in &message.signatures {
             // Ignore seen-before signatures
-            if self.sigs_on_seen_block_this_epoch.contains(signature) { continue; }
+            if self.sigs_on_seen_block_epoch[&block_epoch].contains(signature) { continue; }
             // Add valid signatures
             for pk in self.public_keys.values() {
                 if self.verify_signature(message, signature, pk) {
@@ -610,8 +618,9 @@ impl StreamletInstance {
         let threshold = (2.0 * (self.expected_peer_count + 1) as f64 / 3.0).ceil() as usize;
         // Option 1: this matches the proposal we've seen, and we have previously 
         // observed sufficient signatures in this epoch. 
-        let ret = self.seen_block_this_epoch == Some(block.hash) && 
-            self.sigs_on_seen_block_this_epoch.len() >= threshold;
+        let ret = self.seen_block_epoch.contains_key(&block.epoch) && 
+            self.seen_block_epoch[&block.epoch] == block.hash && 
+            self.sigs_on_seen_block_epoch[&block.epoch].len() >= threshold;
         // Option 2: this message -- by itself -- has the threshold of signatures required. 
         // This occurs if we're doing catch-up from a previous epoch or we missed the proposal.
         return ret || (self.verify_message(&message) >= threshold);
