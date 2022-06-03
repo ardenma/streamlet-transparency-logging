@@ -12,7 +12,7 @@ use std::hash::Hasher;
 use tokio::sync::{Mutex};
 use std::sync::Arc;
 use std::env;
-use bincode::{deserialize, serialize};
+use bincode::serialize;
 
 use log::{debug, info, warn};
 use std::time::Duration;
