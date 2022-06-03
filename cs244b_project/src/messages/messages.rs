@@ -16,7 +16,7 @@ pub struct Message {
     pub tag: u32,
     pub sender_id: u32,
     pub sender_name: String,
-    signatures: Vec<Signature>,
+    pub signatures: Vec<Signature>,
 }
 
 impl Message {

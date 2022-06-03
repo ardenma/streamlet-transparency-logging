@@ -58,10 +58,10 @@ impl BlockchainManager {
         let mut chain_idx = 0;
         for chain in self.notarized_chains.iter_mut() {
             let (block, _) = chain.head();
-            if block.hash == new_block.parent_hash { break; }
+            if block.hash == new_block.parent_hash { return Some(chain_idx) }
             chain_idx += 1;
         }
-        return Some(chain_idx);
+        return None;
     }
 
     /* Tries to adds block to a notarized chain and tries to finalize the

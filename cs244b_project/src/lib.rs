@@ -41,6 +41,8 @@ pub struct StreamletInstance {
     keypair: Keypair,
     public_keys: HashMap<String, PublicKey>,
     sorted_peer_names: Vec<String>,
+    seen_block_this_epoch: Option<[u8; 32]>,
+    sigs_on_seen_block_this_epoch: Vec<Signature>,
 }
 
 enum EventType {
@@ -83,6 +85,8 @@ impl StreamletInstance {
             keypair: keypair,
             public_keys: HashMap::from([(name.clone(), pk)]),
             sorted_peer_names: Vec::new(),
+            seen_block_this_epoch: None,
+            sigs_on_seen_block_this_epoch: vec![],
         }
     }
 
@@ -222,6 +226,8 @@ impl StreamletInstance {
                         tcp_data_sender.send(serialize(&signed_block).expect("Failed to serialize block")).expect("Failed to send block..");
                     }
                     EventType::EpochStart => {
+                        self.seen_block_this_epoch = None;
+                        self.sigs_on_seen_block_this_epoch = vec![];
 
                         // Want to hold locks for as little time as possible s.t. timer doesn't get out of sync
                         let current_epoch_ref = current_epoch_handle.lock().await;
@@ -374,7 +380,14 @@ impl StreamletInstance {
                                     let mut new_message = message.clone();
                                     // Don't "endorse" this vote unless you've already gotten a proposal 
                                     if vote_this_epoch.is_some() {
+                                        // Make sure hashes match in this VOTE and the stored Proposed block and append signatures if so
                                         if let Some(sig) = self.should_vote(&mut new_message, vote_this_epoch, epoch, &block, &app_interface) {
+                                            if self.seen_block_this_epoch == Some(block.hash) {
+                                                self.sigs_on_seen_block_this_epoch.append(&mut new_message.clone().get_signatures());
+                                                self.sigs_on_seen_block_this_epoch.dedup();
+                                            }
+                                            // update message signature list with the most signatures possible
+                                            new_message.signatures = self.sigs_on_seen_block_this_epoch.clone();
                                             // Broadcast messages that we haven't signed yet
                                             // Note: this is an inexact, but reasonable, proxy for echoing
                                             info!("Epoch {}: VOTED and signed message {}; broadcasting", epoch, message.nonce);
@@ -416,6 +429,9 @@ impl StreamletInstance {
                                         // Sign and broadcast
                                         info!("Epoch: {}, (Propose) received PROPOSE, signing and broadcasting message {}...",epoch, message.nonce);
                                         new_message.kind = MessageKind::Vote;
+                                        self.seen_block_this_epoch = Some(block.hash);
+                                        self.sigs_on_seen_block_this_epoch.append(&mut new_message.clone().get_signatures());
+                                        
                                         net_stack.broadcast_message(new_message.serialize());
                                         // If an epoch has passed since we locked the mutex, then we may miss an epoch of voting.
                                         // This is assumed to be rare, and nodes will recover in the next epoch. 
@@ -562,7 +578,7 @@ impl StreamletInstance {
         None 
     }
 
-    /* Determines if the block associated with a message is notarized.
+    /* Determines if the leader was first to sign this message. Used for justifying a new vote. 
     @param epoch: epoch number */
     fn check_from_leader(&self, epoch: u64, message: &Message) -> bool {
         // If message is from leader, only their signature should be on it
