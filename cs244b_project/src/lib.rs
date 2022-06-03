@@ -46,7 +46,7 @@ pub struct StreamletInstance {
     public_keys: HashMap<String, PublicKey>,
     sorted_peer_names: Vec<String>,
     // Solely for demoability
-    pub compromise_type: CompromiseType,
+    pub compromise_types: Vec<CompromiseType>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -96,7 +96,7 @@ impl StreamletInstance {
     /* Initializer:
     @param my_name: identifying "name" of this node
     @param expected_peer_count: expected number of StreamletInstances running */
-    pub fn new(name: String, expected_peer_count: usize, epoch_length: u64, mode: OperationMode) -> Self {
+    pub fn new(name: String, expected_peer_count: usize, epoch_length: u64, mode: OperationMode, compromise_types: Vec<CompromiseType>) -> Self {
         // Setup public/private key pair and id
         let mut csprng = OsRng {};
         let keypair: Keypair = Keypair::generate(&mut csprng);
@@ -114,7 +114,7 @@ impl StreamletInstance {
             keypair: keypair,
             public_keys: HashMap::from([(name.clone(), pk)]),
             sorted_peer_names: Vec::new(),
-            compromise_type: CompromiseType::NoCompromise,
+            compromise_types: compromise_types
         }
     }
 
@@ -123,6 +123,7 @@ impl StreamletInstance {
     2. Performs peer discovery
     3. Runs the main event loop */
     pub async fn run(&mut self, data_type: BenchmarkDataType) {
+        info!("{} running with compromise types: {:?}", self.name, self.compromise_types);
 
         // Share the epoch data here, if we start on 0 the first block gets proposed in 1
         let current_epoch_handle = Arc::new(Mutex::new(0));
@@ -266,28 +267,28 @@ impl StreamletInstance {
                             self.blockchain_manager.print_finalized_chains();
                         }
 
-                        /*
-                         *  Inputs to compromise a specific node to test failure behavior
-                         *  Obviously, this would not exist in an actual implementation, just for demo-ability 
-                         */ 
-                        else if line.starts_with("compromise early-epoch") || line.starts_with("ee")  {
-                            self.compromise_type = CompromiseType::EarlyEpoch
-                        }
-                        else if line.starts_with("compromise late-epoch") || line.starts_with("le")  {
-                            self.compromise_type = CompromiseType::LateEpoch
-                        }
-                        else if line.starts_with("compromise no-propose") || line.starts_with("np") {
-                            self.compromise_type = CompromiseType::NoPropose
-                        }
-                        else if line.starts_with("compromise wrong-parent-hash") || line.starts_with("wp") {
-                            self.compromise_type = CompromiseType::WrongParentHash
-                        }
-                        else if line.starts_with("compromise no-vote") || line.starts_with("nv") {
-                            self.compromise_type = CompromiseType::NoVote
-                        }
-                        else if line.starts_with("compromise non-leader-propose") || line.starts_with("nlp") {
-                            self.compromise_type = CompromiseType::NonLeaderPropose
-                        }
+                        // /*
+                        //  *  Inputs to compromise a specific node to test failure behavior
+                        //  *  Obviously, this would not exist in an actual implementation, just for demo-ability 
+                        //  */ 
+                        // else if line.starts_with("compromise early-epoch") || line.starts_with("ee")  {
+                        //     self.compromise_type = CompromiseType::EarlyEpoch
+                        // }
+                        // else if line.starts_with("compromise late-epoch") || line.starts_with("le")  {
+                        //     self.compromise_type = CompromiseType::LateEpoch
+                        // }
+                        // else if line.starts_with("compromise no-propose") || line.starts_with("np") {
+                        //     self.compromise_type = CompromiseType::NoPropose
+                        // }
+                        // else if line.starts_with("compromise wrong-parent-hash") || line.starts_with("wp") {
+                        //     self.compromise_type = CompromiseType::WrongParentHash
+                        // }
+                        // else if line.starts_with("compromise no-vote") || line.starts_with("nv") {
+                        //     self.compromise_type = CompromiseType::NoVote
+                        // }
+                        // else if line.starts_with("compromise non-leader-propose") || line.starts_with("nlp") {
+                        //     self.compromise_type = CompromiseType::NonLeaderPropose
+                        // }
                     }
                     EventType::TCPRequestChain => {
                         let finalized_chain = self.blockchain_manager.export_local_chain();
@@ -327,9 +328,23 @@ impl StreamletInstance {
                                     BenchmarkDataType::Medium => "medium",
                                     BenchmarkDataType::Large => "large",
                                 };
+                                
+                                let mut flags = String::from("");
+                                for compromise_type in &self.compromise_types {
+                                    let flag = match compromise_type {
+                                        CompromiseType::NoCompromise => 'r',
+                                        CompromiseType::EarlyEpoch => 'e',
+                                        CompromiseType::LateEpoch => 'l',
+                                        CompromiseType::NoPropose => 'p',
+                                        CompromiseType::WrongParentHash => 'h',
+                                        CompromiseType::NoVote => 'v',
+                                        CompromiseType::NonLeaderPropose => 'n'
+                                    };
+                                    flags.push(flag);
+                                }
 
                                 let mut f = File::options().append(true).create(true).open(format!("./logs/{}_nodes/{}.log", self.expected_peer_count + 1, self.name)).expect("Unable to open file");
-                                if let Err(e) = writeln!(f, "{},{},{},{},{}", num_nodes, epoch_length_s, data_type_str, num_finalizations, finalization_percentage) {
+                                if let Err(e) = writeln!(f, "{},{},{},{},{},{}", num_nodes, epoch_length_s, data_type_str, num_finalizations, finalization_percentage, flags) {
                                     eprintln!("Couldn't write to file: {}", e);
                                 }
                                 return;
@@ -342,8 +357,8 @@ impl StreamletInstance {
 
                         // If I am the current leader, propose a block
                         if leader == &self.name 
-                        || self.compromise_type == CompromiseType::NonLeaderPropose
-                        && !(self.compromise_type == CompromiseType::NoPropose) {
+                        || self.compromise_types.contains(&CompromiseType::NonLeaderPropose)
+                        && !(self.compromise_types.contains(&CompromiseType::NoPropose)) {
                             info!("I'm the leader");
                             if let Some(data) = self.pending_transactions.pop_front() {
                                 sleep(Duration::from_millis(EPOCH_DELAY_MS)).await;
@@ -357,12 +372,12 @@ impl StreamletInstance {
                                 let mut parent_hash = parent.hash.clone();
                                 let proposed_block = Block::new(
                                     {
-                                        if self.compromise_type == CompromiseType::EarlyEpoch { 0 }
-                                        else if self.compromise_type == CompromiseType::LateEpoch { epoch + 50 } 
+                                        if self.compromise_types.contains(&CompromiseType::EarlyEpoch) { 0 }
+                                        else if self.compromise_types.contains(&CompromiseType::LateEpoch) { epoch + 50 } 
                                         else { epoch }
                                     },
                                     { 
-                                        if self.compromise_type == CompromiseType::WrongParentHash { parent_hash.sort() } 
+                                        if self.compromise_types.contains(&CompromiseType::WrongParentHash) { parent_hash.sort() } 
                                         parent_hash
                                     },
                                     data,
@@ -488,7 +503,7 @@ impl StreamletInstance {
                                     // Don't "endorse" this vote unless you've already gotten a proposal 
                                     if vote_this_epoch.is_some() {
                                         if let Some(sig) = self.should_vote(&mut new_message, vote_this_epoch, epoch, &block, &app_interface) {
-                                            if self.compromise_type != CompromiseType::NoVote {
+                                            if !self.compromise_types.contains(&CompromiseType::NoVote) {
                                                 // Broadcast messages that we haven't signed yet
                                                 // Note: this is an inexact, but reasonable, proxy for echoing
                                                 info!("Epoch {}: NEW and VALID message {}; broadcasting", epoch, message.nonce);
@@ -528,7 +543,7 @@ impl StreamletInstance {
                                     let mut new_message = message.clone();
                                     let signature = self.should_vote(&mut new_message, vote_this_epoch, epoch, &block, &app_interface);
                                     if let Some(sig) = signature {
-                                        if self.compromise_type != CompromiseType::NoVote {
+                                        if !self.compromise_types.contains(&CompromiseType::NoVote) {
                                             // Sign and broadcast
                                             info!("Epoch: {}, (Propose) received valid PROPOSE, signing and broadcasting message {}...",epoch, message.nonce);
                                             new_message.kind = MessageKind::Vote;
@@ -743,7 +758,7 @@ mod tests {
 
     #[test]
     fn test_streamlet_signatures() {
-        let streamlet = StreamletInstance::new(String::from("Test"), 1, 3, OperationMode::Normal);
+        let streamlet = StreamletInstance::new(String::from("Test"), 1, 3, OperationMode::Normal, Vec::from([CompromiseType::NoCompromise]));
         // Testing signatures
         let message: &[u8] = b"This is a test of the tsunami alert system.";
         let signature: Signature = streamlet.sign(message);
@@ -753,9 +768,9 @@ mod tests {
 
     #[test]
     fn test_streamlet_msg_signatures() {
-        let mut streamlet1 = StreamletInstance::new(String::from("Test1"), 3, 3, OperationMode::Normal);
-        let streamlet2 = StreamletInstance::new(String::from("Test2"), 3, 3, OperationMode::Normal);
-        let streamlet3 = StreamletInstance::new(String::from("Test3"), 3, 3, OperationMode::Normal);
+        let mut streamlet1 = StreamletInstance::new(String::from("Test1"), 3, 3, OperationMode::Normal, Vec::from([CompromiseType::NoCompromise]));
+        let streamlet2 = StreamletInstance::new(String::from("Test2"), 3, 3, OperationMode::Normal, Vec::from([CompromiseType::NoCompromise]));
+        let streamlet3 = StreamletInstance::new(String::from("Test3"), 3, 3, OperationMode::Normal, Vec::from([CompromiseType::NoCompromise]));
 
         // Create random hash
         let mut hasher = Sha256::new();
