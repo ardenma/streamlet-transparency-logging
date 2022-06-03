@@ -13,9 +13,8 @@ pub struct BlockchainManager {
     pub finalized_chain_length: usize,
     pub finalized_chain: LocalChain,
     pub longest_notarized_chain_length: usize, // length = max_height + 1
-    notarized_chains: Vec<LocalChain>, // i *think* we only track a certain number of these... not sure how to determine this exactly
-                                       // longest_notarized_chain: LocalChain,
-                                       // unconfirmed_pending_transactions: String, // we should formulate some actual Transaction struct but I'm not sure what that looks like
+    notarized_chains: Vec<LocalChain>, 
+    pub last_logged_epoch: u64,
 }
 
 impl BlockchainManager {
@@ -29,6 +28,7 @@ impl BlockchainManager {
             finalized_chain: LocalChain::new(),
             longest_notarized_chain_length: 1,
             notarized_chains: Vec::from([LocalChain::new()]),
+            last_logged_epoch: 0,
         }
     }
 
@@ -141,10 +141,26 @@ impl BlockchainManager {
         }
     }
 
+    pub fn fetch_chain_after_epoch(&mut self, epoch: u64) -> Vec<SignedBlock> {
+        let chain = self.finalized_chain.clone().blocks;
+        let chain = chain
+            .into_iter()
+            .filter(|signed_block| (signed_block.block.epoch > epoch) || (self.last_logged_epoch == 0))
+            .collect();
+        chain
+    }
     pub fn fetch_local_finalized_chain(&self) -> LocalChain { self.finalized_chain.clone() }
-    pub fn export_local_finalized_chain_to_file(&self, local_file_path: String) {
+    pub fn export_local_finalized_chain_to_file(&mut self, local_file_path: String) {
+        let last_epoch = self.last_logged_epoch;
         info!("exporting local finalized chain to: {}", local_file_path);
-        fs::write(local_file_path, serde_json::to_string_pretty(&self.fetch_local_finalized_chain()).unwrap()).expect("failed to write to file!");
+        let mut file = OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(local_file_path)
+            .unwrap();
+        let unlogged_chain = serde_json::to_string_pretty(&self.fetch_chain_after_epoch(last_epoch)).unwrap();
+        file.write_all(unlogged_chain.as_bytes()).unwrap();
+        self.last_logged_epoch = self.get_latest_finalized_block().0.epoch;
     }
     pub fn publish_last_finalized_block(&self) {
         info!("publishing most recent finalized block to public chain");
