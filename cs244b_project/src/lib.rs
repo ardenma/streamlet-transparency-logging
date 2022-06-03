@@ -197,7 +197,7 @@ impl StreamletInstance {
 
             // Spawn thread to trigger peer init
             tokio::spawn(async move {
-                sleep(Duration::from_secs(2)).await;
+                sleep(Duration::from_secs(5)).await;
                 trigger_init.send(0).await.expect("can't send init event");
             });
         }
@@ -328,7 +328,7 @@ impl StreamletInstance {
                                     BenchmarkDataType::Large => "large",
                                 };
 
-                                let mut f = File::options().append(true).create(true).open(format!("./logs/{}.log", self.name)).expect("Unable to open file");
+                                let mut f = File::options().append(true).create(true).open(format!("./logs/{}_nodes/{}.log", self.expected_peer_count + 1, self.name)).expect("Unable to open file");
                                 if let Err(e) = writeln!(f, "{},{},{},{},{}", num_nodes, epoch_length_s, data_type_str, num_finalizations, finalization_percentage) {
                                     eprintln!("Couldn't write to file: {}", e);
                                 }

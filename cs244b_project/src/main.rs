@@ -69,6 +69,7 @@ async fn main() {
 
     match config.as_str() {
         "benchmark" => {
+            info!("Starting benchmark master node...");
             std::fs::create_dir_all("./logs");
             let mut children = Vec::new();
             for i in 0..(expected_peer_count+1) {
@@ -80,9 +81,10 @@ async fn main() {
             for mut child in children {
                 let _ = child.wait().await;
             }
-            return;
+            exit(0);
         },
         "benchmark-worker" => {
+            info!("Starting benchmark worker node {name}...");
             let mut streamlet = StreamletInstance::new(name, expected_peer_count, epoch_length, OperationMode::Benchmark);
             let data_type = match args[4].clone().as_str() {
                 "small" => BenchmarkDataType::Small,
@@ -94,6 +96,7 @@ async fn main() {
             exit(1);
         }
         _ => {
+            info!("Starting normal operation node {name}...");
             let mut streamlet = StreamletInstance::new(name, expected_peer_count, epoch_length, OperationMode::Normal);
             streamlet.run(BenchmarkDataType::Small).await; // Runs libp2p event loop
         }
