@@ -612,11 +612,9 @@ impl StreamletInstance {
         // observed sufficient signatures in this epoch. 
         let ret = self.seen_block_this_epoch == Some(block.hash) && 
             self.sigs_on_seen_block_this_epoch.len() >= threshold;
-        // Option 2: we never received a proposal, but this message -- by itself -- has 
-        // the threshold of signatures required. 
-        return ret || 
-            (self.seen_block_this_epoch.is_none() && 
-                self.verify_message(&message) >= threshold);
+        // Option 2: this message -- by itself -- has the threshold of signatures required. 
+        // This occurs if we're doing catch-up from a previous epoch or we missed the proposal.
+        return ret || (self.verify_message(&message) >= threshold);
     }
 
     /* Returns the validity of a proposal. */
