@@ -300,12 +300,15 @@ impl StreamletInstance {
                             info!("I'm the leader");
 
                             if epoch % PUBLISH_RATE == 0 {
-                                // Avoid duplicate publishing the best we can without reading back the file for the last pushed epoch.
-                                // In reality, pushing duplicate blocks to an actual public chain wouldn't be that bad but ideally no node should
-                                // be missing 10 epochs worth of this stuff anyway and still be considered okay to push...
-                                // If we want a solution that better guarantees in-order publication I can try to work something out just most of the options
-                                // seem to either rely on something inefficient or additional messages being sent which could also be missed. 
-                                // Epoch data is attached to eached finalized block published so a user could still discern order. 
+                                // Initial implementation of "regularly checkpoint to a public log"
+                                // For now: 
+                                // - Avoid duplicate publishing the best we can without reading back the last pushed epoch.
+                                // - The leader checks and pushes every PUBLISH_RATE epochs. 
+                                //   We assume that, with random leader selection, dishonest publishers will not be 
+                                //   indefinitely selected. 
+                                // - Epoch data is attached to each finalized block that's published, 
+                                //   so a user can discern missed epochs and order (e.g., if a node lagged behind others).
+                                // - The "public log" is a shared file; see publish_last_finalized_block
                                 let latest_finalized_epoch = self.blockchain_manager.get_latest_finalized_block().0.epoch;
                                 if latest_finalized_epoch != self.epoch_of_last_published_block {
                                     self.epoch_of_last_published_block = latest_finalized_epoch;
