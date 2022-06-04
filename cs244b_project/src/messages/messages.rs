@@ -31,7 +31,6 @@ impl Message {
             signatures: Vec::new() 
         }
     }
-    // Grr... no overloading in Rust... eventually `nonce` should be private. Security-wise it doesn't make sense this way
     pub fn new_with_defined_nonce(payload: MessagePayload, kind: MessageKind, nonce: u32, sender_id: u32, sender_name: String) -> Message {
         Message { 
             payload, 
@@ -74,7 +73,7 @@ impl Message {
     pub fn signature_count(&self) -> usize { self.signatures.len() }
 }
 
-// Wrapper for different kinds of messages (currently only blocks are supported)
+// Wrapper for different kinds of messages
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum MessagePayload {
     Block(Block),

@@ -1,9 +1,8 @@
 use crate::blockchain::*;
 use log::info;
-use std::fs;
 use std::fs::OpenOptions;
 use std::env;
-use std::io::{Read, Write};
+use std::io::Write;
 
 // Struct for managing multiple notarized chains and a finalied chain.
 // Provides the abstraction of a single Chain the user can query/manipulate
