@@ -32,7 +32,6 @@ pub struct NetworkStack {
     // unsubscribe from.
     init_topic: Topic,
     init_open: bool,
-    // Note: could save peer id, but not needed?
 }
 
 #[derive(NetworkBehaviour)]

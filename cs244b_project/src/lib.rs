@@ -13,6 +13,7 @@ use tokio::sync::{Mutex};
 use std::sync::Arc;
 use std::env;
 use bincode::serialize;
+use std::fs;
 
 use log::{debug, info, warn};
 use std::time::Duration;
@@ -47,6 +48,8 @@ pub struct StreamletInstance {
     epoch_of_last_published_block: u64,
     // Solely for demoability
     pub compromise_type: CompromiseType,
+    // Number of times as leader for marking when to publish / export to local log
+    pub leader_count: u64,
 }
 
 #[derive(Debug, PartialEq)]
@@ -104,6 +107,7 @@ impl StreamletInstance {
             sigs_on_seen_block_this_epoch: vec![],
             epoch_of_last_published_block: 0,
             compromise_type: CompromiseType::NoCompromise,
+            leader_count: 0,
         }
     }
 
@@ -218,6 +222,7 @@ impl StreamletInstance {
                 match event {
                     EventType::UserInput(line) => {
                         if line.starts_with("init") {
+                            fs::create_dir_all(format!("{}/src/tmp", env::current_dir().expect("invalid current directory").display().to_string())).unwrap();
                             peers.advertise_self(&mut net_stack);
                         }
                         if line.starts_with("end init") || line.starts_with("e i") || line.starts_with("end discovery") || line.starts_with("e d") {
@@ -299,7 +304,10 @@ impl StreamletInstance {
                         && !(self.compromise_type == CompromiseType::NoPropose) {
                             info!("I'm the leader");
 
-                            if epoch % PUBLISH_RATE == 0 {
+                            self.leader_count += 1;
+                            // Ensures that publication happens frequently enough to not miss out if there is node failure.
+                            // But not too often that it becomes too taxing to the system.
+                            if (epoch % PUBLISH_RATE == 0) || (self.leader_count % PUBLISH_RATE == 0) {
                                 // Initial implementation of "regularly checkpoint to a public log"
                                 // For now: 
                                 // - Avoid duplicate publishing the best we can without reading back the last pushed epoch.
@@ -308,6 +316,7 @@ impl StreamletInstance {
                                 // - Epoch data is attached to each finalized block that's published, 
                                 //   so a user can discern missed epochs and order (e.g., if a node lagged behind others).
                                 // - The "public log" is a shared file; see publish_last_finalized_block
+                                
                                 let latest_finalized_epoch = self.blockchain_manager.get_latest_finalized_block().0.epoch;
                                 if latest_finalized_epoch != self.epoch_of_last_published_block {
                                     self.epoch_of_last_published_block = latest_finalized_epoch;
