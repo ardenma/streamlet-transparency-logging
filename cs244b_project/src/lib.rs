@@ -303,9 +303,8 @@ impl StreamletInstance {
                                 // Initial implementation of "regularly checkpoint to a public log"
                                 // For now: 
                                 // - Avoid duplicate publishing the best we can without reading back the last pushed epoch.
-                                // - The leader checks and pushes every PUBLISH_RATE epochs. 
-                                //   We assume that, with random leader selection, dishonest publishers will not be 
-                                //   indefinitely selected. 
+                                // - The leader tries to push every PUBLISH_RATE epochs. 
+                                //   We assume that dishonest publishers will not be indefinitely selected. 
                                 // - Epoch data is attached to each finalized block that's published, 
                                 //   so a user can discern missed epochs and order (e.g., if a node lagged behind others).
                                 // - The "public log" is a shared file; see publish_last_finalized_block
