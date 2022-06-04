@@ -12,7 +12,7 @@ use std::hash::Hasher;
 use tokio::sync::{Mutex};
 use std::sync::Arc;
 use std::env;
-use bincode::{deserialize, serialize};
+use bincode::serialize;
 
 use log::{debug, info, warn};
 use std::time::Duration;
@@ -229,24 +229,36 @@ impl StreamletInstance {
                          *  Obviously, this would not exist in an actual implementation, just for demo-ability 
                          */ 
                         else if line.starts_with("compromise early-epoch") || line.starts_with("ee")  {
+                            info!("Compromised node will always assign epoch 0 to proposals.");
                             self.compromise_type = CompromiseType::EarlyEpoch
                         }
                         else if line.starts_with("compromise late-epoch") || line.starts_with("le")  {
+                            info!("Compromised node will always assign current_epoch + 50 to proposals.");
                             self.compromise_type = CompromiseType::LateEpoch
                         }
                         else if line.starts_with("compromise no-propose") || line.starts_with("np") {
+                            info!("Compromised node will not propose when leader.");
                             self.compromise_type = CompromiseType::NoPropose
                         }
                         else if line.starts_with("compromise wrong-parent-hash") || line.starts_with("wp") {
+                            info!("Compromised node will assign incorrect parent-hash to proposed blocks.");
                             self.compromise_type = CompromiseType::WrongParentHash
                         }
                         else if line.starts_with("compromise no-vote") || line.starts_with("nv") {
+                            info!("Compromised node will never vote.");
                             self.compromise_type = CompromiseType::NoVote
                         }
                         else if line.starts_with("compromise non-leader-propose") || line.starts_with("nlp") {
+                            info!("Compromised node will propose each epoch even if not the leader.");
                             self.compromise_type = CompromiseType::NonLeaderPropose
                         }
+                        else if line.starts_with("no-compromise") || line.starts_with("c") {
+                            info!("Compromised node is no longer compromised.");
+                            self.compromise_type = CompromiseType::NoCompromise
+                        }
+
                     }
+
                     EventType::TCPRequestChain => {
                         let finalized_chain = self.blockchain_manager.fetch_local_finalized_chain();
                         debug!("Sending chain {} to TCP thread", finalized_chain);
