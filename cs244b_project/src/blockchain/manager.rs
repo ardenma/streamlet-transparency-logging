@@ -1,5 +1,5 @@
 use crate::blockchain::*;
-use log::info;
+    use log::{info, error, warn};
 use std::fs::OpenOptions;
 use std::env;
 use std::io::Write;
@@ -80,8 +80,12 @@ impl BlockchainManager {
                 // not crazy important
 
                 notarized_chain.append_block(notarized_block.clone(), signatures);
-                info!("\n\nAdded notarized block with epoch: {}, \nnonce: {}, \nparent hash: {:?}, \nhash: {:?}\nNew chain: {}\n",
-                      notarized_block.epoch, notarized_block.nonce, String::from_utf8_lossy(&notarized_block.parent_hash[..]), String::from_utf8_lossy(&notarized_block.hash[..]), notarized_chain);
+                // info!("\n\nAdded notarized block with epoch: {}, \nnonce: {}, \nparent hash: {:?}, \nhash: {:?}\nNew chain: {}\n",
+                //       notarized_block.epoch, notarized_block.nonce, String::from_utf8_lossy(&notarized_block.parent_hash[..]), String::from_utf8_lossy(&notarized_block.hash[..]), notarized_chain);
+                warn!(
+                        "\n\nAdded notarized block with epoch: {}, new notarized chain {}\n",
+                        notarized_block.epoch, notarized_chain
+                    );
                 if notarized_chain.length() > self.longest_notarized_chain_length {
                     self.longest_notarized_chain_length = notarized_chain.length();
                     info!(
@@ -132,7 +136,7 @@ impl BlockchainManager {
             && commit_2.epoch == commit_1.epoch + 1 {
             self.finalized_chain = notarized_chain.copy_up_to_height(commit_2.height);
             self.finalized_chain_length = self.finalized_chain.length();
-            info!(
+            error!(
                 "\n\nSuccessfully finalized chain, new finalized chain {}\n",
                 self.finalized_chain
             );
@@ -161,7 +165,7 @@ impl BlockchainManager {
         self.last_logged_epoch = self.get_latest_finalized_block().0.epoch;
     }
     pub fn publish_last_finalized_block(&self) {
-        info!("publishing most recent finalized block to public chain");
+        warn!("publishing most recent finalized block to public chain");
         // Hard-coding the public path here but if we want to get fancy with it we could have this be determined by the app or have it be specifiable. Just trying to make checking easy
         let public_path = format!("{}/src/tmp/{}.txt", env::current_dir().expect("invalid current directory").display().to_string(), "pub");
         let mut file = OpenOptions::new()
@@ -169,7 +173,8 @@ impl BlockchainManager {
             .create(true)
             .open(public_path)
             .unwrap();
-        let latest_finalized_block_msg = serde_json::to_string_pretty(&self.get_latest_finalized_block()).unwrap();
+        // let latest_finalized_block_msg = serde_json::to_string_pretty(&self.get_latest_finalized_block()).unwrap();
+        let latest_finalized_block_msg = format!("{:?}", &self.get_latest_finalized_block());
         file.write_all(latest_finalized_block_msg.as_bytes()).unwrap();
         
     }

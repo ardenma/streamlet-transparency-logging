@@ -15,7 +15,7 @@ use std::env;
 use bincode::serialize;
 use std::fs;
 
-use log::{debug, info, warn};
+use log::{debug, info, warn, error};
 use std::time::Duration;
 use tokio::{
     io::{stdin, AsyncBufReadExt, BufReader},
@@ -73,7 +73,7 @@ enum EventType {
 
 // Toggle based on number of nodes. 
 // Should be higher for more nodes s.t. time for finalization. 
-const EPOCH_LENGTH_S: u64 = 10;
+const EPOCH_LENGTH_S: u64 = 3;
 const EPOCH_DELAY_MS: u64 = 100;
 const PUBLISH_RATE: u64 =  10;
 
@@ -118,7 +118,7 @@ impl StreamletInstance {
     pub async fn run(&mut self) {
 
         // Share the epoch data here
-        let current_epoch_handle = Arc::new(Mutex::new(1));
+        let current_epoch_handle = Arc::new(Mutex::new(0));
         // If we've voted in the current epoch, store our "vote" (signature) here
         let vote_this_epoch_handle = Arc::new(Mutex::new(None));
         // Initialize
@@ -298,11 +298,15 @@ impl StreamletInstance {
                         
                         info!("Epoch: {} starting with leader {}...", epoch, leader);
 
+                        if leader == &self.name && self.compromise_type == CompromiseType::NoPropose {
+                            warn!("(Compromised) Skipping Proposal this Epoch!")
+                        }
+
                         // If I am the current leader, propose a block
                         if leader == &self.name 
                         || self.compromise_type == CompromiseType::NonLeaderPropose
                         && !(self.compromise_type == CompromiseType::NoPropose) {
-                            info!("I'm the leader");
+                            error!("I'm the leader");
 
                             self.leader_count += 1;
                             // Ensures that publication happens frequently enough to not miss out if there is node failure.
